@@ -67,7 +67,10 @@ pub fn setTextAlloc(
     comptime fmt: []const u8,
     args: anytype,
 ) !void {
-    self.text = try std.fmt.allocPrint(allocator, fmt, args);
+    // Format first: on failure the previous text must stay intact.
+    const text = try std.fmt.allocPrint(allocator, fmt, args);
+    if (self.allocator) |previous| previous.free(self.text);
+    self.text = text;
     self.allocator = allocator;
 }
 

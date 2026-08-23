@@ -1633,7 +1633,7 @@ fn authenticate(ptr: *anyopaque) !bool {
 
     try state.buffer.reclaim();
 
-    const auth_err = shared_err.readError();
+    const auth_err = try shared_err.readError();
     if (auth_err) |err| {
         state.auth_fails += 1;
         state.buffer.setActiveWidget(state.password_widget);
@@ -2481,13 +2481,15 @@ fn getAllUsernames(allocator: Allocator) !StringList {
         const is_within_range =
             entry.uid >= uid_range.uid_min and
             entry.uid <= uid_range.uid_max;
-        const is_root =
-            entry.uid == 0 and
-            entry.username != null;
+        const is_root = entry.uid == 0;
 
-        if (is_within_range or is_root) {
-            const username = try allocator.dupe(u8, entry.username.?);
-            try usernames.append(allocator, username);
+        // A passwd entry can carry a null name whatever its UID, so the name
+        // gates the whole thing rather than just the root case.
+        if (entry.username) |name| {
+            if (is_within_range or is_root) {
+                const username = try allocator.dupe(u8, name);
+                try usernames.append(allocator, username);
+            }
         }
 
         maybe_entry = interop.getNextUsernameEntry();

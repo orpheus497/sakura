@@ -249,16 +249,17 @@ pub fn runEventLoop(
             try TerminalBuffer.clearScreen(false);
 
             // Reset cursor
-            const current_widget = self.getActiveWidget();
-            current_widget.handle(null) catch |err| {
-                shared_error.writeError(error.SetCursorFailed);
-                try self.log_file.err(
-                    io,
-                    "tui",
-                    "failed to set cursor in active widget '{s}': {s}",
-                    .{ current_widget.display_name, @errorName(err) },
-                );
-            };
+            if (self.getActiveWidget()) |current_widget| {
+                current_widget.handle(null) catch |err| {
+                    shared_error.writeError(error.SetCursorFailed);
+                    try self.log_file.err(
+                        io,
+                        "tui",
+                        "failed to set cursor in active widget '{s}': {s}",
+                        .{ current_widget.display_name, @errorName(err) },
+                    );
+                };
+            }
 
             for (layers) |layer| {
                 for (layer) |widget| {
@@ -328,17 +329,18 @@ pub fn runEventLoop(
         if (maybe_keys) |*keys| {
             defer keys.deinit(allocator);
 
-            const current_widget = self.getActiveWidget();
-            for (keys.items) |key| {
-                current_widget.handle(key) catch |err| {
-                    shared_error.writeError(error.CurrentWidgetHandlingFailed);
-                    try self.log_file.err(
-                        io,
-                        "tui",
-                        "failed to handle active widget '{s}': {s}",
-                        .{ current_widget.display_name, @errorName(err) },
-                    );
-                };
+            if (self.getActiveWidget()) |current_widget| {
+                for (keys.items) |key| {
+                    current_widget.handle(key) catch |err| {
+                        shared_error.writeError(error.CurrentWidgetHandlingFailed);
+                        try self.log_file.err(
+                            io,
+                            "tui",
+                            "failed to handle active widget '{s}': {s}",
+                            .{ current_widget.display_name, @errorName(err) },
+                        );
+                    };
+                }
             }
 
             self.update = true;
@@ -354,7 +356,10 @@ pub fn drawNextFrame(self: *TerminalBuffer, value: bool) void {
     self.update = value;
 }
 
-pub fn getActiveWidget(self: *TerminalBuffer) *Widget {
+/// The widget keyboard input is currently directed at, or null when no widget
+/// in the layout accepts input.
+pub fn getActiveWidget(self: *TerminalBuffer) ?*Widget {
+    if (self.active_widget_index >= self.handlable_widgets.items.len) return null;
     return self.handlable_widgets.items[self.active_widget_index];
 }
 
@@ -571,7 +576,7 @@ pub fn setPaletteCell(self: *TerminalBuffer, x: usize, y: usize, ch: u32, fg: u4
     }
 }
 
-pub fn reclaim(self: TerminalBuffer) !void {
+pub fn reclaim(self: *const TerminalBuffer) !void {
     if (self.termios) |termios| {
         // Take back control of the TTY
         const err = termbox.tb_init();
@@ -629,14 +634,15 @@ pub fn simulateKeybind(self: *TerminalBuffer, io: std.Io, keybind: []const u8) !
         );
     }
 
-    const current_widget = self.getActiveWidget();
-    if (current_widget.keybinds) |keybinds| {
-        if (keybinds.get(key)) |binding| {
-            return try @call(
-                .auto,
-                binding.callback,
-                .{binding.context},
-            );
+    if (self.getActiveWidget()) |current_widget| {
+        if (current_widget.keybinds) |keybinds| {
+            if (keybinds.get(key)) |binding| {
+                return try @call(
+                    .auto,
+                    binding.callback,
+                    .{binding.context},
+                );
+            }
         }
     }
 
@@ -714,8 +720,10 @@ fn clearBackBuffer() !void {
     const capability_slice = std.mem.span(capability);
     const result = std.posix.system.write(termbox.global.ttyfd, capability_slice.ptr, capability_slice.len);
 
-    if (result != capability_slice.len) return error.PartialClearBackBuffer;
+    // Check the failure case first: -1 is also "not the full length", so the
+    // order here decides which error a caller actually sees.
     if (result < 0) return error.ClearBackBufferFailed;
+    if (result != capability_slice.len) return error.PartialClearBackBuffer;
 }
 
 fn parseKeybind(self: *TerminalBuffer, io: std.Io, keybind: []const u8) !keyboard.Key {
@@ -769,21 +777,22 @@ fn handleKeybind(
             return keys;
         }
 
-        const current_widget = self.getActiveWidget();
-        if (current_widget.keybinds) |keybinds| {
-            if (keybinds.get(key)) |binding| {
-                const passthrough_event = try @call(
-                    .auto,
-                    binding.callback,
-                    .{binding.context},
-                );
+        if (self.getActiveWidget()) |current_widget| {
+            if (current_widget.keybinds) |keybinds| {
+                if (keybinds.get(key)) |binding| {
+                    const passthrough_event = try @call(
+                        .auto,
+                        binding.callback,
+                        .{binding.context},
+                    );
 
-                if (!passthrough_event) {
-                    keys.deinit(allocator);
-                    return null;
+                    if (!passthrough_event) {
+                        keys.deinit(allocator);
+                        return null;
+                    }
+
+                    return keys;
                 }
-
-                return keys;
             }
         }
     }
@@ -802,6 +811,7 @@ fn moveCursorUp(ptr: *anyopaque) !bool {
 
 fn moveCursorDown(ptr: *anyopaque) !bool {
     var state: *TerminalBuffer = @ptrCast(@alignCast(ptr));
+    if (state.handlable_widgets.items.len == 0) return false;
     if (state.active_widget_index == state.handlable_widgets.items.len - 1) return false;
 
     state.active_widget_index += 1;
@@ -811,6 +821,7 @@ fn moveCursorDown(ptr: *anyopaque) !bool {
 
 fn wrapCursor(ptr: *anyopaque) !bool {
     var state: *TerminalBuffer = @ptrCast(@alignCast(ptr));
+    if (state.handlable_widgets.items.len == 0) return false;
 
     state.active_widget_index = (state.active_widget_index + 1) % state.handlable_widgets.items.len;
     state.update = true;
@@ -819,6 +830,7 @@ fn wrapCursor(ptr: *anyopaque) !bool {
 
 fn wrapCursorReverse(ptr: *anyopaque) !bool {
     var state: *TerminalBuffer = @ptrCast(@alignCast(ptr));
+    if (state.handlable_widgets.items.len == 0) return false;
 
     state.active_widget_index = if (state.active_widget_index == 0) state.handlable_widgets.items.len - 1 else state.active_widget_index - 1;
     state.update = true;

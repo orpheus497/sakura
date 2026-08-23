@@ -14,6 +14,11 @@ pub fn CyclableLabel(comptime ItemType: type, comptime ChangeItemType: type) typ
 
         const Self = @This();
 
+        /// Columns between the component origin and the item text: the `<`
+        /// arrow and the space after it. `cursor` is measured from there,
+        /// because that is what the drawItem callbacks store in it.
+        const text_offset = 2;
+
         allocator: Allocator,
         buffer: *TerminalBuffer,
         list: ItemList,
@@ -77,19 +82,19 @@ pub fn CyclableLabel(comptime ItemType: type, comptime ChangeItemType: type) typ
 
         pub fn positionX(self: *Self, original_pos: Position) void {
             self.component_pos = original_pos;
-            self.cursor = self.component_pos.x + 2;
+            self.cursor = 0;
             self.children_pos = original_pos.addX(self.width);
         }
 
         pub fn positionY(self: *Self, original_pos: Position) void {
             self.component_pos = original_pos;
-            self.cursor = self.component_pos.x + 2;
+            self.cursor = 0;
             self.children_pos = original_pos.addY(1);
         }
 
         pub fn positionXY(self: *Self, original_pos: Position) void {
             self.component_pos = original_pos;
-            self.cursor = self.component_pos.x + 2;
+            self.cursor = 0;
             self.children_pos = Position.init(
                 self.width,
                 1,
@@ -106,8 +111,10 @@ pub fn CyclableLabel(comptime ItemType: type, comptime ChangeItemType: type) typ
         }
 
         pub fn handle(self: *Self, _: ?keyboard.Key) !void {
+            // drawItem leaves `cursor` at the end of the text it drew, counted
+            // from the text origin, so the component origin goes back on here.
             try TerminalBuffer.setCursor(
-                self.component_pos.x + self.cursor + 2,
+                self.component_pos.x + text_offset + self.cursor,
                 self.component_pos.y,
             );
         }
@@ -126,9 +133,9 @@ pub fn CyclableLabel(comptime ItemType: type, comptime ChangeItemType: type) typ
             ) catch {};
 
             const current_item = self.list.items[self.current];
-            const x = self.component_pos.x + 2;
+            const x = self.component_pos.x + text_offset;
             const y = self.component_pos.y;
-            const width = self.width - 2;
+            const width = self.width - text_offset;
 
             @call(
                 .auto,
@@ -139,6 +146,7 @@ pub fn CyclableLabel(comptime ItemType: type, comptime ChangeItemType: type) typ
 
         fn goLeft(ptr: *anyopaque) !bool {
             var self: *Self = @ptrCast(@alignCast(ptr));
+            if (self.list.items.len == 0) return false;
 
             self.current = if (self.current == 0) self.list.items.len - 1 else self.current - 1;
 
@@ -155,6 +163,7 @@ pub fn CyclableLabel(comptime ItemType: type, comptime ChangeItemType: type) typ
 
         fn goRight(ptr: *anyopaque) !bool {
             var self: *Self = @ptrCast(@alignCast(ptr));
+            if (self.list.items.len == 0) return false;
 
             self.current = if (self.current == self.list.items.len - 1) 0 else self.current + 1;
 

@@ -26,6 +26,14 @@ pub fn init(io: std.Io, path: ?[]const u8, buffer: []u8) !LogFile {
 }
 
 pub fn reinit(self: *LogFile, io: std.Io) !void {
+    // Reopening without closing would leak the previous descriptor; deinit
+    // clears the handle, so this only fires when one is genuinely still open.
+    if (self.maybe_file) |file| {
+        file.close(io);
+        self.maybe_file = null;
+        self.maybe_file_writer = null;
+    }
+
     if (self.maybe_path) |path| {
         self.could_open_log_file = try openLogFile(io, path, self);
     } else {
@@ -37,6 +45,9 @@ pub fn reinit(self: *LogFile, io: std.Io) !void {
 pub fn deinit(self: *LogFile, io: std.Io) void {
     if (self.maybe_file) |file| {
         file.close(io);
+        // Clear it so a later reinit cannot close the same descriptor twice.
+        self.maybe_file = null;
+        self.maybe_file_writer = null;
     } else {
         std.posix.system.closelog();
     }

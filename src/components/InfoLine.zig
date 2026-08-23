@@ -54,7 +54,7 @@ pub fn widget(self: *InfoLine) *Widget {
     if (self.instance) |*instance| return instance;
     self.instance = Widget.init(
         "InfoLine",
-        self.label.keybinds,
+        &self.label.keybinds,
         self,
         deinit,
         null,

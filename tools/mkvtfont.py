@@ -173,8 +173,12 @@ def main():
         run(["otf2bdf", "-r", "72", "-p", str(args.pointsize),
              "-c", "C", "-l", SUBSET, args.font, "-o", raw], produces=raw)
 
-        text, bw, bh, blanks, synthed = rewrite(open(raw).read())
-        open(fixed, "w").write(text)
+        with open(raw) as fh:
+            text, bw, bh, blanks, synthed = rewrite(fh.read())
+        # Close before vtfontcvt reads it: relying on refcount finalisation to
+        # flush is a CPython implementation detail.
+        with open(fixed, "w") as fh:
+            fh.write(text)
         if args.keep_bdf:
             shutil.copy(fixed, args.keep_bdf)
 

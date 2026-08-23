@@ -109,7 +109,10 @@ pub fn setTextAlloc(
     comptime fmt: []const u8,
     args: anytype,
 ) !void {
-    self.text = try std.fmt.allocPrint(allocator, fmt, args);
+    // Format first: on failure the previous text must stay intact.
+    const text = try std.fmt.allocPrint(allocator, fmt, args);
+    if (self.allocator) |previous| previous.free(self.text);
+    self.text = text;
     self.allocator = allocator;
 }
 
@@ -130,7 +133,7 @@ pub fn setText(self: *BigLabel, text: []const u8) void {
 
 pub fn positionX(self: *BigLabel, original_pos: Position) void {
     self.component_pos = original_pos;
-    self.children_pos = original_pos.addX(TerminalBuffer.strWidth(self.text) * CHAR_WIDTH);
+    self.children_pos = original_pos.addX(TerminalBuffer.strWidth(self.text) * (CHAR_WIDTH + 1));
 }
 
 pub fn positionY(self: *BigLabel, original_pos: Position) void {
@@ -141,7 +144,8 @@ pub fn positionY(self: *BigLabel, original_pos: Position) void {
 pub fn positionXY(self: *BigLabel, original_pos: Position) void {
     self.component_pos = original_pos;
     self.children_pos = Position.init(
-        TerminalBuffer.strWidth(self.text) * CHAR_WIDTH,
+        // draw() steps CHAR_WIDTH + 1 per character; keep the two in step.
+        TerminalBuffer.strWidth(self.text) * (CHAR_WIDTH + 1),
         CHAR_HEIGHT,
     ).add(original_pos);
 }

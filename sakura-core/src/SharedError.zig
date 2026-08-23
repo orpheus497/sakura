@@ -36,12 +36,23 @@ pub fn writeError(self: SharedError, err: anyerror) void {
     var writer: std.Io.Writer = .fixed(self.data);
     writer.writeStruct(ErrorHandler{ .has_error = true, .err_int = @intFromError(err) }, .native) catch {};
 
+    // The callback and its context are independent options, so a callback
+    // without a context is a configuration the API allows; skip it rather than
+    // unwrapping a null.
     if (self.write_error_event_fn) |write_error_event_fn| {
-        @call(.auto, write_error_event_fn, .{ err, self.ctx.? }) catch {};
+        if (self.ctx) |ctx| {
+            @call(.auto, write_error_event_fn, .{ err, ctx }) catch {};
+        }
     }
 }
 
-pub fn readError(self: SharedError) ?anyerror {
+/// Returns the error the other process recorded, if any.
+///
+/// The result is an error union over an optional deliberately: a failure to
+/// read the shared page is not the same thing as the session having failed,
+/// and `?anyerror` alone would silently conflate the two, since an `anyerror`
+/// value coerces straight into it.
+pub fn readError(self: SharedError) !?anyerror {
     var reader: std.Io.Reader = .fixed(self.data);
     const err_handler = try reader.takeStruct(ErrorHandler, .native);
 

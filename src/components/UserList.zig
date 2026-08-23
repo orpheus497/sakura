@@ -97,7 +97,7 @@ pub fn widget(self: *UserList) *Widget {
     if (self.instance) |*instance| return instance;
     self.instance = Widget.init(
         "UserList",
-        self.label.keybinds,
+        &self.label.keybinds,
         self,
         deinit,
         null,

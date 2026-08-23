@@ -166,7 +166,9 @@ pub fn setEnvironmentVariable(allocator: std.mem.Allocator, name: []const u8, va
     if (status != 0) return error.SetEnvironmentVariableFailed;
 }
 
-pub fn putEnvironmentVariable(name_and_value: []u8) !void {
+/// `putenv` keeps the pointer it is given rather than copying, so the buffer
+/// must be NUL-terminated and must outlive the environment entry.
+pub fn putEnvironmentVariable(name_and_value: [:0]u8) !void {
     const status = stdlib.putenv(name_and_value.ptr);
     if (status != 0) return error.PutEnvironmentVariableFailed;
 }

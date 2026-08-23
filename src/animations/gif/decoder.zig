@@ -150,7 +150,13 @@ fn parse(allocator: Allocator, bytes: []u8) !Gif {
                 if (pos + 2 > bytes.len) return Error.TruncatedGif;
                 const label = bytes[pos + 1];
                 pos += 2;
-                if (label == 0xF9 and pos < bytes.len and bytes[pos] >= 4) {
+                if (label == 0xF9) {
+                    // A graphic control extension carries exactly four data
+                    // bytes. Any other size means the block is malformed, not
+                    // merely unfamiliar, so reject it rather than reading
+                    // fields that may not be there.
+                    if (pos >= bytes.len or bytes[pos] != 4) return Error.TruncatedGif;
+                    if (pos + 5 > bytes.len) return Error.TruncatedGif;
                     const gce = bytes[pos + 1 ..];
                     pending_disposal = @enumFromInt((gce[0] >> 2) & 0x07);
                     pending_transparent = if (gce[0] & 0x01 != 0) gce[3] else null;
@@ -352,14 +358,24 @@ const interlace_step = [4]u16{ 8, 8, 4, 2 };
 /// Decompresses `frame` and composites it onto `canvas`, which holds unified
 /// palette indices for the whole logical screen. Pixels equal to the frame's
 /// transparent index are left untouched, which is what makes GIF deltas work.
+///
+/// The stream must account for every pixel of the frame. A short one is
+/// reported rather than accepted: frames are deltas, so a half-decoded frame
+/// would leave the canvas part new and part stale, and every frame after it
+/// would compound the damage.
 pub fn decodeFrame(gif: *const Gif, frame: Frame, canvas: []u8) !void {
     std.debug.assert(canvas.len == @as(usize, gif.width) * gif.height);
 
     const map = frame.palette_map orelse gif.global_map;
     if (map.len == 0) return Error.InvalidLzwStream;
 
-    const min_code_size: u4 = @intCast(gif.bytes[frame.data_offset]);
-    if (min_code_size < 2 or min_code_size > 11) return Error.InvalidLzwStream;
+    // A GIF colour table holds at most 256 entries, so the minimum code size
+    // is 2..8. Larger values are not merely unusual: clear_code would exceed
+    // 256, letting a fully unwound code reach 511 and trap on the u8 cast that
+    // produces first_byte.
+    const raw_min_code_size = gif.bytes[frame.data_offset];
+    if (raw_min_code_size < 2 or raw_min_code_size > 8) return Error.InvalidLzwStream;
+    const min_code_size: u4 = @intCast(raw_min_code_size);
 
     const clear_code: u16 = @as(u16, 1) << min_code_size;
     const end_code: u16 = clear_code + 1;
@@ -412,6 +428,7 @@ pub fn decodeFrame(gif: *const Gif, frame: Frame, canvas: []u8) !void {
             current = prefix[current];
         }
         first_byte = @intCast(current);
+        if (stack_len >= stack.len) return Error.InvalidLzwStream;
         stack[stack_len] = first_byte;
         stack_len += 1;
 
@@ -455,7 +472,7 @@ pub fn decodeFrame(gif: *const Gif, frame: Frame, canvas: []u8) !void {
         previous_code = code;
     }
 
-    return;
+    if (written != total) return Error.InvalidLzwStream;
 }
 
 /// Plays a `Gif` forward, keeping the composed logical screen in `canvas`.
@@ -536,3 +553,129 @@ pub const Compositor = struct {
         }
     }
 };
+
+/// Builds the smallest `Gif` `decodeFrame` will accept, borrowing the caller's
+/// buffers so nothing needs freeing.
+fn testGif(bytes: []u8, map: []u8, palette: []u32, frames: []Frame) Gif {
+    return .{
+        .allocator = std.testing.allocator,
+        .bytes = bytes,
+        .width = 1,
+        .height = 1,
+        .palette = palette,
+        .global_map = map,
+        .background = 0,
+        .frames = frames,
+    };
+}
+
+const test_frame = Frame{
+    .data_offset = 0,
+    .left = 0,
+    .top = 0,
+    .width = 1,
+    .height = 1,
+    .interlaced = false,
+    .palette_map = null,
+    .transparent = null,
+    .disposal = .unspecified,
+    .delay_ms = 0,
+};
+
+/// Packs `clear, 0, end` at `min_code_size` into `out`, the shortest LZW stream
+/// that decodes to exactly one pixel of colour index 0. Codes are written
+/// least-significant bit first, as GIF requires.
+fn onePixelStream(min_code_size: u4, out: []u8) []u8 {
+    const code_size: u6 = @as(u6, min_code_size) + 1;
+    const clear: u32 = @as(u32, 1) << min_code_size;
+
+    var bits: u64 = 0;
+    var count: u6 = 0;
+    for ([_]u32{ clear, 0, clear + 1 }) |code| {
+        bits |= @as(u64, code) << count;
+        count += code_size;
+    }
+
+    var n: usize = 0;
+    while (count > 0) : (n += 1) {
+        out[n] = @truncate(bits);
+        bits >>= 8;
+        count -|= 8;
+    }
+    return out[0..n];
+}
+
+/// Lays a one-pixel frame out as a GIF image-data block: minimum code size,
+/// one sub-block, then the terminator.
+fn onePixelFrame(min_code_size: u4, out: []u8) []u8 {
+    var payload: [8]u8 = undefined;
+    const stream = onePixelStream(min_code_size, &payload);
+    out[0] = min_code_size;
+    out[1] = @intCast(stream.len);
+    @memcpy(out[2..][0..stream.len], stream);
+    out[2 + stream.len] = 0;
+    return out[0 .. 3 + stream.len];
+}
+
+test "a well-formed stream fills the frame" {
+    var map = [_]u8{7};
+    var palette = [_]u32{0};
+    var frames = [_]Frame{};
+
+    // 8 is the largest minimum code size the format allows; pairing this with
+    // the rejection test below is what pins the bound at exactly 8.
+    for ([_]u4{ 2, 5, 8 }) |min_code_size| {
+        var bytes: [16]u8 = undefined;
+        _ = onePixelFrame(min_code_size, &bytes);
+
+        var canvas = [_]u8{0};
+        const gif = testGif(&bytes, &map, &palette, &frames);
+        try decodeFrame(&gif, test_frame, &canvas);
+        try std.testing.expectEqual(@as(u8, 7), canvas[0]);
+    }
+}
+
+test "the LZW minimum code size is held to the range GIF allows" {
+    // byte 0 is the minimum code size, byte 1 terminates the sub-block chain.
+    var bytes = [_]u8{ 0, 0 };
+    var map = [_]u8{0};
+    var palette = [_]u32{0};
+    var frames = [_]Frame{};
+    var canvas = [_]u8{0};
+    const gif = testGif(&bytes, &map, &palette, &frames);
+
+    // 9 and above would let an unwound code exceed a u8; 0 and 1 are below the
+    // range the format defines.
+    for ([_]u8{ 0, 1, 9, 10, 11, 12, 255 }) |size| {
+        bytes[0] = size;
+        try std.testing.expectError(
+            Error.InvalidLzwStream,
+            decodeFrame(&gif, test_frame, &canvas),
+        );
+    }
+}
+
+test "a stream that ends before the frame is filled is rejected" {
+    var map = [_]u8{7};
+    var palette = [_]u32{0};
+    var frames = [_]Frame{};
+    var canvas = [_]u8{0};
+
+    // A legal minimum code size, but the sub-block chain terminates before any
+    // pixel arrives.
+    var empty = [_]u8{ 2, 0 };
+    const truncated = testGif(&empty, &map, &palette, &frames);
+    try std.testing.expectError(
+        Error.InvalidLzwStream,
+        decodeFrame(&truncated, test_frame, &canvas),
+    );
+
+    // Likewise when the stream is well-formed but stops at the end code before
+    // producing the pixel: clear, end.
+    var bytes = [_]u8{ 2, 1, 0b101_100, 0 };
+    const early = testGif(&bytes, &map, &palette, &frames);
+    try std.testing.expectError(
+        Error.InvalidLzwStream,
+        decodeFrame(&early, test_frame, &canvas),
+    );
+}

@@ -333,6 +333,8 @@ TUI display manager by the Fairy Glade. All the groundwork — the TUI, the
 animations, the session handling and the Zig rewrite — comes from Ly and its
 contributors. Sakura narrows that work down to a single platform.
 
+Sakura takes its theming from and heavily inspired by https://github.com/Keyitdev/sddm-astronaut-theme , the pixel_sakura.gif and pixel_sakura_static.png both come directly from here
+
 ## License
 
 Sakura, like Ly, is released under the WTFPL. See `license.md`.

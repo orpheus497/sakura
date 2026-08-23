@@ -30,8 +30,6 @@ const Color = TerminalBuffer.Color;
 const Widget = sakura_ui.Widget;
 
 const sakura_core = sakura_ui.sakura_core;
-const interop = sakura_core.interop;
-const TimeOfDay = interop.TimeOfDay;
 const LogFile = sakura_core.LogFile;
 
 const decoder = @import("gif/decoder.zig");
@@ -129,7 +127,9 @@ glyphs: []u32,
 
 current: usize,
 time_previous: i64,
-start_time: TimeOfDay,
+/// Monotonic milliseconds at construction, for the inactivity timeout. Same
+/// clock as `time_previous`, so the two can never disagree.
+start_ms: i64,
 animate: *bool,
 timeout_sec: u12,
 failed: bool = false,
@@ -200,6 +200,8 @@ pub fn init(
     errdefer allocator.free(cached);
     @memset(cached, false);
 
+    const started = std.Io.Timestamp.now(io, .awake).toMilliseconds();
+
     var self = Gif{
         .allocator = allocator,
         .io = io,
@@ -223,8 +225,8 @@ pub fn init(
         .layout = .{},
         .glyphs = glyphs,
         .current = 0,
-        .time_previous = std.Io.Timestamp.now(io, .real).toMilliseconds(),
-        .start_time = try interop.getTimeOfDay(),
+        .time_previous = started,
+        .start_ms = started,
         .animate = animate,
         .timeout_sec = timeout_sec,
     };
@@ -514,10 +516,27 @@ fn rebuild(self: *Gif) !void {
         slot.* = @min(@as(u32, @intFromFloat(@max(t, 0))), self.movie.height - 1);
     }
 
+    // Two bytes per cell: the glyph slot, then the colour pair. Build the
+    // replacement cache in full before touching any of the live state: if an
+    // allocation fails part way through, the errdefers above would otherwise
+    // free maps that self had already been pointed at.
+    const new_frames = try self.allocator.alloc([]u8, self.cache.len);
+    errdefer self.allocator.free(new_frames);
+    var built: usize = 0;
+    errdefer {
+        for (new_frames[0..built]) |frame| self.allocator.free(frame);
+    }
+    while (built < new_frames.len) : (built += 1) {
+        new_frames[built] = try self.allocator.alloc(u8, columns * rows * 2);
+    }
+
+    // Nothing below can fail, so the swap is all-or-nothing.
     for (self.cache) |frame| {
         if (frame.len > 0) self.allocator.free(frame);
     }
-    @memset(self.cache, &.{});
+    @memcpy(self.cache, new_frames);
+    self.allocator.free(new_frames);
+
     @memset(self.cached, false);
     self.cache_count = 0;
 
@@ -526,11 +545,6 @@ fn rebuild(self: *Gif) !void {
     self.map_x = map_x;
     self.map_y = map_y;
     self.layout = layout;
-
-    // Two bytes per cell: the glyph slot, then the colour pair.
-    for (self.cache) |*frame| {
-        frame.* = try self.allocator.alloc(u8, columns * rows * 2);
-    }
 
     // Note: the compositor is created lazily in ensureCached(), never here.
     // rebuild() also runs from init(), where `self` is a local that gets copied
@@ -603,8 +617,12 @@ fn renderFrame(self: *const Gif, destination: []u8, canvas: []const u8) void {
 fn update(self: *Gif, _: *anyopaque) !void {
     if (self.failed) return;
 
-    const time = try interop.getTimeOfDay();
-    if (self.timeout_sec > 0 and time.seconds - self.start_time.seconds > self.timeout_sec) {
+    // One monotonic reading drives both the timeout and the frame cadence, so
+    // an NTP step on the real clock can neither cut the animation short nor
+    // leave it running forever.
+    const now = std.Io.Timestamp.now(self.io, .awake).toMilliseconds();
+
+    if (self.timeout_sec > 0 and now - self.start_ms > @as(i64, self.timeout_sec) * std.time.ms_per_s) {
         self.animate.* = false;
         return;
     }
@@ -626,7 +644,6 @@ fn update(self: *Gif, _: *anyopaque) !void {
     }
 
     // Advance if this frame has been on screen for its full delay.
-    const now = std.Io.Timestamp.now(self.io, .real).toMilliseconds();
     const delay: i64 = @intCast(self.movie.frames[self.current].delay_ms);
     var next = self.current;
     if (now - self.time_previous >= delay) {
@@ -681,7 +698,8 @@ fn calculateTimeout(self: *Gif, _: *anyopaque) !?usize {
     if (!self.animate.* or self.failed) return null;
 
     // Wake up when this frame is due to be replaced, not on a fixed tick.
-    const now = std.Io.Timestamp.now(self.io, .real).toMilliseconds();
+    // Same monotonic clock as update(), or the two would disagree.
+    const now = std.Io.Timestamp.now(self.io, .awake).toMilliseconds();
     const delay: i64 = @intCast(self.movie.frames[self.current].delay_ms);
     const remaining = delay - (now - self.time_previous);
     return @intCast(@max(remaining, 1));

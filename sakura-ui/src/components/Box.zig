@@ -97,6 +97,15 @@ pub fn childrenPosition(self: Box) Position {
 }
 
 fn draw(self: *Box) void {
+    // The border is drawn one cell outside the box. Against the left or top
+    // edge there is no such cell, and computing it would underflow, so those
+    // runs are skipped. positionXY also leaves the origin at 0,0 when the
+    // terminal is too small for a box at all.
+    const has_left = self.left_pos.x > 0;
+    const has_top = self.left_pos.y > 0;
+    const border_x = if (has_left) self.left_pos.x - 1 else 0;
+    const border_y = if (has_top) self.left_pos.y - 1 else 0;
+
     if (self.show_borders) {
         var left_up = Cell.init(
             self.buffer.box_chars.left_up,
@@ -129,13 +138,13 @@ fn draw(self: *Box) void {
             self.bg,
         );
 
-        left_up.put(self.left_pos.x - 1, self.left_pos.y - 1) catch {};
-        right_up.put(self.right_pos.x, self.left_pos.y - 1) catch {};
-        left_down.put(self.left_pos.x - 1, self.right_pos.y) catch {};
+        if (has_left and has_top) left_up.put(border_x, border_y) catch {};
+        if (has_top) right_up.put(self.right_pos.x, border_y) catch {};
+        if (has_left) left_down.put(border_x, self.right_pos.y) catch {};
         right_down.put(self.right_pos.x, self.right_pos.y) catch {};
 
         for (0..self.width) |i| {
-            top.put(self.left_pos.x + i, self.left_pos.y - 1) catch {};
+            if (has_top) top.put(self.left_pos.x + i, border_y) catch {};
             bottom.put(self.left_pos.x + i, self.right_pos.y) catch {};
         }
 
@@ -143,7 +152,7 @@ fn draw(self: *Box) void {
         bottom.ch = self.buffer.box_chars.right;
 
         for (0..self.height) |i| {
-            top.put(self.left_pos.x - 1, self.left_pos.y + i) catch {};
+            if (has_left) top.put(border_x, self.left_pos.y + i) catch {};
             bottom.put(self.right_pos.x, self.left_pos.y + i) catch {};
         }
     }
@@ -157,10 +166,10 @@ fn draw(self: *Box) void {
     }
 
     if (self.top_title) |title| {
-        TerminalBuffer.drawConfinedText(
+        if (has_top) TerminalBuffer.drawConfinedText(
             title,
             self.left_pos.x,
-            self.left_pos.y - 1,
+            border_y,
             self.width,
             self.title_fg,
             self.bg,

@@ -160,7 +160,7 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     try log_file.info(io, "auth/utmp", "removing utmp entry", .{});
     removeUtmpEntry(&entry);
 
-    if (shared_err.readError()) |err| return err;
+    if (try shared_err.readError()) |err| return err;
 }
 
 fn startSession(

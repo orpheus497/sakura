@@ -332,10 +332,11 @@ pub fn getKeyList(allocator: Allocator, tb_event: termbox.tb_event) !KeyList {
             },
             30 => {
                 key.ctrl = true;
+                key.@"6" = true;
                 try keys.append(allocator, key);
 
                 key = std.mem.zeroes(Key);
-                key.@"6" = true;
+                key.@"^" = true;
             },
             31 => {
                 key.ctrl = true;
@@ -689,6 +690,7 @@ pub fn getKeyList(allocator: Allocator, tb_event: termbox.tb_event) !KeyList {
                 key.z = true;
             },
             123 => {
+                key = std.mem.zeroes(Key);
                 key.@"{" = true;
             },
             124 => {

@@ -77,7 +77,7 @@ pub fn widget(self: *Text) *Widget {
     if (self.instance) |*instance| return instance;
     self.instance = Widget.init(
         "Text",
-        self.keybinds,
+        &self.keybinds,
         self,
         deinit,
         null,
@@ -203,6 +203,9 @@ fn goRight(ptr: *anyopaque) !bool {
     var self: *Text = @ptrCast(@alignCast(ptr));
 
     if (self.cursor >= self.end) return false;
+    // A degenerate width leaves no column to move into, and self.width - 1
+    // would wrap around.
+    if (self.width == 0) return false;
     if (self.cursor - self.visible_start == self.width - 1) self.visible_start += 1;
 
     self.cursor += 1;

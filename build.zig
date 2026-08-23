@@ -66,6 +66,17 @@ pub fn build(b: *std.Build) !void {
     const uid_min = b.option(std.posix.uid_t, "uid_min", "Set the minimum UID of listed users (default is 1000). This value gets embedded into the binary") orelse 1000;
     const uid_max = b.option(std.posix.uid_t, "uid_max", "Set the maximum UID of listed users (default is 32000). This value gets embedded into the binary") orelse 32000;
 
+    // FreeBSD numbers virtual terminals from 1, so zero is not a terminal.
+    // Reject it here, before it reaches the installer or the binary.
+    if (default_tty == 0) {
+        std.debug.print("error: -Ddefault_tty must be 1 or greater; FreeBSD numbers virtual terminals from 1.\n", .{});
+        return error.InvalidDefaultTty;
+    }
+    if (fallback_tty == 0) {
+        std.debug.print("error: -Dfallback_tty must be 1 or greater; FreeBSD numbers virtual terminals from 1.\n", .{});
+        return error.InvalidFallbackTty;
+    }
+
     const default_tty_str = try std.fmt.allocPrint(b.allocator, "{d}", .{default_tty});
 
     build_options.addOption([]const u8, "config_directory", config_directory);

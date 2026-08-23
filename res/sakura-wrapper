@@ -4,4 +4,4 @@
 # try to append "login -fp root" as arguments to Sakura, which is not
 # supported. To avoid this, we use a wrapper script that ignores these
 # arguments before actually executing Sakura.
-exec $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME
+exec "$PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME"

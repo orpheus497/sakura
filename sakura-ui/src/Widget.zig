@@ -16,13 +16,15 @@ pub var idCounter: u64 = 0;
 
 id: u64,
 display_name: []const u8,
-keybinds: ?TerminalBuffer.KeybindMap,
+/// Borrowed from the widget's own storage: a copy would go stale the moment
+/// the owner registered another binding or freed the map.
+keybinds: ?*TerminalBuffer.KeybindMap,
 pointer: *anyopaque,
 vtable: VTable,
 
 pub fn init(
     display_name: []const u8,
-    keybinds: ?TerminalBuffer.KeybindMap,
+    keybinds: ?*TerminalBuffer.KeybindMap,
     pointer: anytype,
     comptime deinit_fn: ?fn (ptr: @TypeOf(pointer)) void,
     comptime realloc_fn: ?fn (ptr: @TypeOf(pointer)) anyerror!void,

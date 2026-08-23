@@ -63,7 +63,7 @@ pub fn widget(self: *Session) *Widget {
     if (self.instance) |*instance| return instance;
     self.instance = Widget.init(
         "Session",
-        self.label.keybinds,
+        &self.label.keybinds,
         self,
         deinit,
         null,
