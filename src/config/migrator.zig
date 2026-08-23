@@ -6,13 +6,13 @@ const build_options = @import("build_options");
 const std = @import("std");
 var temporary_allocator = std.heap.page_allocator;
 
-const ly_ui = @import("ly-ui");
-const TerminalBuffer = ly_ui.TerminalBuffer;
+const sakura_ui = @import("sakura-ui");
+const TerminalBuffer = sakura_ui.TerminalBuffer;
 const Color = TerminalBuffer.Color;
 const Styling = TerminalBuffer.Styling;
-const ly_core = ly_ui.ly_core;
-const IniParser = ly_core.IniParser;
-const ini = ly_core.ini;
+const sakura_core = sakura_ui.sakura_core;
+const IniParser = sakura_core.IniParser;
+const ini = sakura_core.ini;
 
 const Config = @import("Config.zig");
 const Lang = @import("Lang.zig");
@@ -54,6 +54,11 @@ const removed_properties = [_][]const u8{
     "hide_keyboard_locks",
     "hide_version_string",
     "show_tty",
+    // Linux-only options, dropped when Sakura became FreeBSD-only
+    "login_defs_path",
+    // The Linux sysfs battery identifier has no FreeBSD equivalent; the
+    // replacement option (battery_sysctl) takes a sysctl MIB instead
+    "battery_id",
 };
 
 pub var auto_eight_colors: bool = true;
@@ -167,6 +172,14 @@ pub fn configFieldHandler(_: std.mem.Allocator, field: ini.IniField) ?ini.IniFie
         return field;
     }
 
+    if (std.mem.eql(u8, field.key, "ly_log")) {
+        // The option has simply been renamed
+        var mapped_field = field;
+        mapped_field.key = "sakura_log";
+
+        return mapped_field;
+    }
+
     if (std.mem.eql(u8, field.key, "min_refresh_delta")) {
         // The option has simply been renamed
         var mapped_field = field;
@@ -200,7 +213,7 @@ pub fn configFieldHandler(_: std.mem.Allocator, field: ini.IniField) ?ini.IniFie
         var mapped_field = field;
 
         if (std.mem.eql(u8, field.value, "true")) {
-            mapped_field.value = build_options.config_directory ++ "/ly";
+            mapped_field.value = build_options.config_directory ++ "/sakura";
         } else if (std.mem.eql(u8, field.value, "false")) {
             mapped_field.value = "null";
         }
@@ -229,7 +242,7 @@ pub fn configFieldHandler(_: std.mem.Allocator, field: ini.IniField) ?ini.IniFie
     //
     //      Forever Sullied,
     //
-    //      Ly Contributor.
+    //      Sakura Contributor.
     //
     if (std.mem.startsWith(u8, field.header, "cmd:")) {
         const key = field.header["cmd:".len..];

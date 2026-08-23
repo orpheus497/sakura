@@ -1,15 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const InitSystem = enum {
-    systemd,
-    openrc,
-    runit,
-    s6,
-    dinit,
-    sysvinit,
-    freebsd,
-};
 const InstallType = enum {
     installexe,
     installnoconf,
@@ -28,7 +19,7 @@ comptime {
     }
 }
 
-const ly_version = std.SemanticVersion{ .major = 1, .minor = 5, .patch = 0 };
+const sakura_version = std.SemanticVersion{ .major = 1, .minor = 0, .patch = 0 };
 
 fn InstallStep(
     b: *std.Build,
@@ -38,7 +29,6 @@ fn InstallStep(
     config_directory: []const u8,
     prefix_directory: []const u8,
     executable_name: []const u8,
-    init_system: InitSystem,
     default_tty_str: []const u8,
 ) *std.Build.Step.Run {
     const step = b.addRunArtifact(b.addExecutable(.{
@@ -56,7 +46,6 @@ fn InstallStep(
         config_directory,
         prefix_directory,
         executable_name,
-        std.enums.tagName(InitSystem, init_system).?,
         default_tty_str,
     });
 
@@ -65,18 +54,28 @@ fn InstallStep(
 
 pub fn build(b: *std.Build) !void {
     const dest_directory = b.option([]const u8, "dest_directory", "Specify a destination directory for installation") orelse "";
-    const config_directory = b.option([]const u8, "config_directory", "Specify a default config directory (default is /etc). This path gets embedded into the binary") orelse "/etc";
-    const prefix_directory = b.option([]const u8, "prefix_directory", "Specify a default prefix directory (default is /usr)") orelse "/usr";
-    const executable_name = b.option([]const u8, "name", "Specify installed executable file name (default is ly)") orelse "ly";
-    const init_system = b.option(InitSystem, "init_system", "Specify the target init system (default is systemd)") orelse .systemd;
+    const config_directory = b.option([]const u8, "config_directory", "Specify a default config directory (default is /usr/local/etc). This path gets embedded into the binary") orelse "/usr/local/etc";
+    const prefix_directory = b.option([]const u8, "prefix_directory", "Specify a default prefix directory (default is /usr/local)") orelse "/usr/local";
+    const executable_name = b.option([]const u8, "name", "Specify installed executable file name (default is sakura)") orelse "sakura";
 
     const build_options = b.addOptions();
-    const version_str = try getVersionStr(b, "ly", ly_version);
+    const version_str = try getVersionStr(b, "sakura", sakura_version);
     const enable_x11_support = b.option(bool, "enable_x11_support", "Enable X11 support (default is on)") orelse true;
-    const default_tty = b.option(u8, "default_tty", "Set the TTY (default is 2)") orelse 2;
-    const fallback_tty = b.option(u8, "fallback_tty", "Set the fallback TTY (default is 2). This value gets embedded into the binary") orelse 2;
-    const fallback_uid_min = b.option(std.posix.uid_t, "fallback_uid_min", "Set the fallback minimum UID (default is 1000). This value gets embedded into the binary") orelse 1000;
-    const fallback_uid_max = b.option(std.posix.uid_t, "fallback_uid_max", "Set the fallback maximum UID (default is 60000). This value gets embedded into the binary") orelse 60000;
+    const default_tty = b.option(u8, "default_tty", "Set the virtual terminal Sakura runs on (default is 2, i.e. /dev/ttyv1)") orelse 2;
+    const fallback_tty = b.option(u8, "fallback_tty", "Set the fallback virtual terminal (default is 2). This value gets embedded into the binary") orelse 2;
+    const uid_min = b.option(std.posix.uid_t, "uid_min", "Set the minimum UID of listed users (default is 1000). This value gets embedded into the binary") orelse 1000;
+    const uid_max = b.option(std.posix.uid_t, "uid_max", "Set the maximum UID of listed users (default is 32000). This value gets embedded into the binary") orelse 32000;
+
+    // FreeBSD numbers virtual terminals from 1, so zero is not a terminal.
+    // Reject it here, before it reaches the installer or the binary.
+    if (default_tty == 0) {
+        std.debug.print("error: -Ddefault_tty must be 1 or greater; FreeBSD numbers virtual terminals from 1.\n", .{});
+        return error.InvalidDefaultTty;
+    }
+    if (fallback_tty == 0) {
+        std.debug.print("error: -Dfallback_tty must be 1 or greater; FreeBSD numbers virtual terminals from 1.\n", .{});
+        return error.InvalidFallbackTty;
+    }
 
     const default_tty_str = try std.fmt.allocPrint(b.allocator, "{d}", .{default_tty});
 
@@ -85,15 +84,26 @@ pub fn build(b: *std.Build) !void {
     build_options.addOption([]const u8, "version", version_str);
     build_options.addOption(u8, "tty", default_tty);
     build_options.addOption(u8, "fallback_tty", fallback_tty);
-    build_options.addOption(std.posix.uid_t, "fallback_uid_min", fallback_uid_min);
-    build_options.addOption(std.posix.uid_t, "fallback_uid_max", fallback_uid_max);
+    build_options.addOption(std.posix.uid_t, "uid_min", uid_min);
+    build_options.addOption(std.posix.uid_t, "uid_max", uid_max);
     build_options.addOption(bool, "enable_x11_support", enable_x11_support);
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Sakura is a FreeBSD-only display manager. Bail out early with a readable
+    // message instead of letting the build fail somewhere deep inside a C
+    // header translation.
+    if (target.result.os.tag != .freebsd) {
+        std.debug.print(
+            "error: Sakura only supports FreeBSD, but the requested target is '{t}'.\n",
+            .{target.result.os.tag},
+        );
+        return error.UnsupportedTarget;
+    }
+
     const exe = b.addExecutable(.{
-        .name = "ly",
+        .name = "sakura",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
@@ -109,14 +119,14 @@ pub fn build(b: *std.Build) !void {
     });
     exe.root_module.addImport("zlua", zlua.module("zlua"));
 
-    const ly_ui = b.dependency("ly_ui", .{
+    const sakura_ui = b.dependency("sakura_ui", .{
         .target = target,
         .optimize = optimize,
         .enable_x11_support = enable_x11_support,
-        .fallback_uid_min = fallback_uid_min,
-        .fallback_uid_max = fallback_uid_max,
+        .uid_min = uid_min,
+        .uid_max = uid_max,
     });
-    exe.root_module.addImport("ly-ui", ly_ui.module("ly-ui"));
+    exe.root_module.addImport("sakura-ui", sakura_ui.module("sakura-ui"));
 
     exe.root_module.addOptions("build_options", build_options);
 
@@ -135,7 +145,13 @@ pub fn build(b: *std.Build) !void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const installexe_step = b.step("installexe", "Install Ly and the selected init system service");
+    const exe_tests = b.addTest(.{ .root_module = exe.root_module });
+    const run_exe_tests = b.addRunArtifact(exe_tests);
+
+    const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&run_exe_tests.step);
+
+    const installexe_step = b.step("installexe", "Install Sakura, its configuration and its getty wrapper");
     installexe_step.dependOn(&InstallStep(
         b,
         target,
@@ -144,11 +160,10 @@ pub fn build(b: *std.Build) !void {
         config_directory,
         prefix_directory,
         executable_name,
-        init_system,
         default_tty_str,
     ).step);
 
-    const installnoconf_step = b.step("installnoconf", "Install Ly and the selected init system service, but not the configuration file");
+    const installnoconf_step = b.step("installnoconf", "Install Sakura and its getty wrapper, but not the configuration file");
     installnoconf_step.dependOn(&InstallStep(
         b,
         target,
@@ -157,11 +172,10 @@ pub fn build(b: *std.Build) !void {
         config_directory,
         prefix_directory,
         executable_name,
-        init_system,
         default_tty_str,
     ).step);
 
-    const uninstallexe_step = b.step("uninstallexe", "Uninstall Ly and remove the selected init system service");
+    const uninstallexe_step = b.step("uninstallexe", "Uninstall Sakura, its configuration and its getty wrapper");
     uninstallexe_step.dependOn(&InstallStep(
         b,
         target,
@@ -170,11 +184,10 @@ pub fn build(b: *std.Build) !void {
         config_directory,
         prefix_directory,
         executable_name,
-        init_system,
         default_tty_str,
     ).step);
 
-    const uninstallnoconf_step = b.step("uninstallnoconf", "Uninstall Ly and remove the selected init system service, but keep the configuration directory");
+    const uninstallnoconf_step = b.step("uninstallnoconf", "Uninstall Sakura and its getty wrapper, but keep the configuration directory");
     uninstallnoconf_step.dependOn(&InstallStep(
         b,
         target,
@@ -183,7 +196,6 @@ pub fn build(b: *std.Build) !void {
         config_directory,
         prefix_directory,
         executable_name,
-        init_system,
         default_tty_str,
     ).step);
 }

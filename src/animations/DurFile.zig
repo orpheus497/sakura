@@ -4,17 +4,17 @@ const Json = std.json;
 const eql = std.mem.eql;
 const flate = std.compress.flate;
 
-const ly_ui = @import("ly-ui");
-const Cell = ly_ui.Cell;
-const TerminalBuffer = ly_ui.TerminalBuffer;
+const sakura_ui = @import("sakura-ui");
+const Cell = sakura_ui.Cell;
+const TerminalBuffer = sakura_ui.TerminalBuffer;
 const Color = TerminalBuffer.Color;
 const Styling = TerminalBuffer.Styling;
-const Widget = ly_ui.Widget;
+const Widget = sakura_ui.Widget;
 
-const ly_core = ly_ui.ly_core;
-const interop = ly_core.interop;
+const sakura_core = sakura_ui.sakura_core;
+const interop = sakura_core.interop;
 const TimeOfDay = interop.TimeOfDay;
-const LogFile = ly_core.LogFile;
+const LogFile = sakura_core.LogFile;
 
 const enums = @import("../enums.zig");
 const DurOffsetAlignment = enums.DurOffsetAlignment;

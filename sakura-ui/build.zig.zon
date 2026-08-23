@@ -1,0 +1,24 @@
+.{
+    .name = .sakura_ui,
+    .version = "1.0.0",
+    .fingerprint = 0xe076d1fda74ec803,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .sakura_core = .{
+            .path = "../sakura-core",
+        },
+        .termbox2 = .{
+            .url = "git+https://github.com/AnErrupTion/termbox2?ref=master#c7f241e8888ce243e1748b05c26a42fcfaaad936",
+            .hash = "N-V-__8AAAUXBQD6Fwpi9m0MBqWXFFaqW5l1lVrJC2Ynj7a-",
+        },
+        .translate_c = .{
+            .url = "git+https://codeberg.org/ziglang/translate-c?ref=zig-0.16.x#6fe0ffc4549f15c5f2d9432c2b4460ba90ff85ac",
+            .hash = "translate_c-1.0.0-Q_BUWo_5BgD4flHdUhA31zOz0XvZk9k7lQv1ouzyNXj2",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

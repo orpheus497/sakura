@@ -6,21 +6,20 @@ const builtin = @import("builtin");
 const build_options = @import("build_options");
 
 const clap = @import("clap");
-const ly_ui = @import("ly-ui");
-const Position = ly_ui.Position;
-const BigLabel = ly_ui.BigLabel;
-const Box = ly_ui.Box;
-const Label = ly_ui.Label;
-const Text = ly_ui.Text;
-const TerminalBuffer = ly_ui.TerminalBuffer;
-const Widget = ly_ui.Widget;
-const ly_core = ly_ui.ly_core;
-const interop = ly_core.interop;
-const UidRange = ly_core.UidRange;
-const LogFile = ly_core.LogFile;
-const SharedError = ly_core.SharedError;
-const IniParser = ly_core.IniParser;
-const ini = ly_core.ini;
+const sakura_ui = @import("sakura-ui");
+const Position = sakura_ui.Position;
+const BigLabel = sakura_ui.BigLabel;
+const Box = sakura_ui.Box;
+const Label = sakura_ui.Label;
+const Text = sakura_ui.Text;
+const TerminalBuffer = sakura_ui.TerminalBuffer;
+const Widget = sakura_ui.Widget;
+const sakura_core = sakura_ui.sakura_core;
+const interop = sakura_core.interop;
+const LogFile = sakura_core.LogFile;
+const SharedError = sakura_core.SharedError;
+const IniParser = sakura_core.IniParser;
+const ini = sakura_core.ini;
 const Ini = ini.Ini;
 
 const Cascade = @import("animations/Cascade.zig");
@@ -28,6 +27,7 @@ const ColorMix = @import("animations/ColorMix.zig");
 const Doom = @import("animations/Doom.zig");
 const DurFile = @import("animations/DurFile.zig");
 const GameOfLife = @import("animations/GameOfLife.zig");
+const Gif = @import("animations/Gif.zig");
 const Matrix = @import("animations/Matrix.zig");
 const Lua = @import("animations/Lua.zig");
 const auth = @import("auth.zig");
@@ -44,7 +44,7 @@ const DisplayServer = @import("enums.zig").DisplayServer;
 const Environment = @import("Environment.zig");
 const Entry = Environment.Entry;
 
-const ly_version_str = "Ly version " ++ build_options.version;
+const sakura_version_str = "Sakura version " ++ build_options.version;
 
 var session_pid: std.posix.pid_t = -1;
 fn signalHandler(sig: std.posix.SIG) callconv(.c) void {
@@ -82,7 +82,6 @@ const UiState = struct {
     io: std.Io,
     auth_fails: u64,
     is_autologin: bool,
-    use_kmscon_vt: bool,
     active_tty: u8,
     buffer: TerminalBuffer,
     labels_max_length: usize,
@@ -160,9 +159,8 @@ pub fn main(init: std.process.Init) !void {
     // Load arguments
     const params = comptime clap.parseParamsComptime(
         \\-h, --help                Shows all commands.
-        \\-v, --version             Shows the version of Ly.
-        \\-c, --config <str>        Overrides the default configuration path. Example: --config /usr/share/ly
-        \\--use-kmscon-vt           Uses KMSCON instead of the kernel VT.
+        \\-v, --version             Shows the version of Sakura.
+        \\-c, --config <str>        Overrides the default configuration path. Example: --config /usr/local/share/sakura
         \\--validate-config <str>   Validates the given configuration file.
     );
 
@@ -179,27 +177,24 @@ pub fn main(init: std.process.Init) !void {
     var old_save_parser: ?IniParser(OldSave) = null;
     defer if (old_save_parser) |*str| str.deinit();
 
-    state.use_kmscon_vt = false;
-
     var start_cmd_exit_code: u8 = 0;
 
     state.saved_users = SavedUsers.init();
     defer state.saved_users.deinit(state.allocator);
 
-    var config_parent_path: []const u8 = build_options.config_directory ++ "/ly";
+    var config_parent_path: []const u8 = build_options.config_directory ++ "/sakura";
     if (maybe_res) |*res| {
         if (res.args.help != 0) {
             try clap.help(stderr, clap.Help, &params, .{});
 
-            std.log.info("note: if you want to configure Ly, please check the config file, which is located at " ++ build_options.config_directory ++ "/ly/config.ini.", .{});
+            std.log.info("note: if you want to configure Sakura, please check the config file, which is located at " ++ build_options.config_directory ++ "/sakura/config.ini.", .{});
             std.process.exit(0);
         }
         if (res.args.version != 0) {
-            std.log.info("ly version " ++ build_options.version, .{});
+            std.log.info("sakura version " ++ build_options.version, .{});
             std.process.exit(0);
         }
         if (res.args.config) |path| config_parent_path = path;
-        if (res.args.@"use-kmscon-vt" != 0) state.use_kmscon_vt = true;
         if (res.args.@"validate-config") |path| {
             var parser = try IniParser(Config).init(
                 state.allocator,
@@ -278,8 +273,7 @@ pub fn main(init: std.process.Init) !void {
         migrator.lateConfigFieldHandler(&state.config, state.lang);
     }
 
-    var maybe_uid_range_error: ?anyerror = null;
-    var usernames = try getAllUsernames(state.allocator, state.io, state.config.login_defs_path, &maybe_uid_range_error);
+    var usernames = try getAllUsernames(state.allocator);
     defer {
         for (usernames.items) |username| state.allocator.free(username);
         usernames.deinit(state.allocator);
@@ -351,10 +345,8 @@ pub fn main(init: std.process.Init) !void {
 
     var log_file_buffer: [1024]u8 = undefined;
 
-    state.log_file = try LogFile.init(state.io, state.config.ly_log, &log_file_buffer);
+    state.log_file = try LogFile.init(state.io, state.config.sakura_log, &log_file_buffer);
     defer state.log_file.deinit(state.io);
-
-    try state.log_file.info(state.io, "tui", "using {s} vt", .{if (state.use_kmscon_vt) "kmscon" else "default"});
 
     if (state.config.start_cmd) |start_cmd| handle_start_cmd: {
         var process = std.process.spawn(state.io, .{
@@ -612,20 +604,6 @@ pub fn main(init: std.process.Init) !void {
             "cli",
             "unable to parse argument '{s}{s}': {s}",
             .{ longest.kind.prefix(), longest.name, @errorName(arg_parse_error) },
-        );
-    }
-
-    if (maybe_uid_range_error) |err| {
-        try state.info_line.addMessage(
-            state.lang.err_uid_range,
-            state.config.error_bg,
-            state.config.error_fg,
-        );
-        try state.log_file.err(
-            state.io,
-            "sys",
-            "failed to get uid range: {s}; falling back to default",
-            .{@errorName(err)},
         );
     }
 
@@ -908,7 +886,7 @@ pub fn main(init: std.process.Init) !void {
     defer if (state.login_text) |lt| lt.deinit();
 
     state.version_label = Label.init(
-        ly_version_str,
+        sakura_version_str,
         null,
         state.buffer.fg,
         state.buffer.bg,
@@ -975,7 +953,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // Switch to selected TTY
-    state.active_tty = interop.getActiveTty(state.allocator, state.io, state.use_kmscon_vt) catch |err| no_tty_found: {
+    state.active_tty = interop.getActiveTty() catch |err| no_tty_found: {
         try state.info_line.addMessage(
             state.lang.err_get_active_tty,
             state.config.error_bg,
@@ -989,25 +967,30 @@ pub fn main(init: std.process.Init) !void {
         );
         break :no_tty_found build_options.fallback_tty;
     };
-    if (!state.use_kmscon_vt) {
-        interop.switchTty(state.active_tty) catch |err| {
-            try state.info_line.addMessage(
-                state.lang.err_switch_tty,
-                state.config.error_bg,
-                state.config.error_fg,
-            );
-            try state.log_file.err(
-                state.io,
-                "sys",
-                "failed to switch to tty {d}: {s}",
-                .{ state.active_tty, @errorName(err) },
-            );
-        };
+    interop.switchTty(state.active_tty) catch |err| {
+        try state.info_line.addMessage(
+            state.lang.err_switch_tty,
+            state.config.error_bg,
+            state.config.error_fg,
+        );
+        try state.log_file.err(
+            state.io,
+            "sys",
+            "failed to switch to tty {d}: {s}",
+            .{ state.active_tty, @errorName(err) },
+        );
+    };
+
+    {
+        var tty_name_buf: [8]u8 = undefined;
+        const tty_name = try interop.ttyDeviceName(&tty_name_buf, state.active_tty);
+        try state.tty_label.setTextBuf(&state.tty_buf, "{s}", .{tty_name});
     }
 
-    try state.tty_label.setTextBuf(&state.tty_buf, "tty{d}", .{state.active_tty});
-
-    // Initialize the animation, if any
+    // Initialize the animation, if any.
+    // Note: `gif_storage` lives out here rather than inside the switch prong
+    // because the Widget holds a pointer into it for the whole session.
+    var gif_storage: ?Gif = null;
     var animation: ?*Widget = null;
     switch (state.config.animation) {
         .none => {},
@@ -1083,6 +1066,38 @@ pub fn main(init: std.process.Init) !void {
             );
             animation = dur.widget();
         },
+        .gif => {
+            // The wallpaper is on by default, so a missing or corrupt file must
+            // never stop someone logging in: report it and carry on unadorned.
+            if (Gif.init(
+                state.allocator,
+                state.io,
+                &state.buffer,
+                &state.log_file,
+                state.config.gif_file,
+                state.config.gif_scaling,
+                state.config.gif_font_aspect,
+                state.config.gif_stipple,
+                state.config.bg,
+                &state.animate,
+                state.config.animation_timeout_sec,
+            )) |loaded| {
+                gif_storage = loaded;
+                animation = gif_storage.?.widget();
+            } else |err| {
+                try state.info_line.addMessage(
+                    state.lang.err_gif,
+                    state.config.error_bg,
+                    state.config.error_fg,
+                );
+                try state.log_file.err(
+                    state.io,
+                    "tui",
+                    "failed to load the gif wallpaper: {s}",
+                    .{@errorName(err)},
+                );
+            }
+        },
         .lua => {
             var lua = try Lua.init(
                 state.io,
@@ -1111,7 +1126,7 @@ pub fn main(init: std.process.Init) !void {
     );
 
     state.auth_fails = 0;
-    state.animate = state.config.animation != .none;
+    state.animate = animation != null;
     state.edge_margin = Position.init(
         state.config.edge_margin,
         state.config.edge_margin,
@@ -1575,7 +1590,6 @@ fn authenticate(ptr: *anyopaque) !bool {
                 .x_cmd = state.config.x_cmd,
                 .x_vt = state.config.x_vt,
                 .session_pid = session_pid,
-                .use_kmscon_vt = state.use_kmscon_vt,
             };
 
             // Signal action to give up control on the TTY
@@ -1619,7 +1633,7 @@ fn authenticate(ptr: *anyopaque) !bool {
 
     try state.buffer.reclaim();
 
-    const auth_err = shared_err.readError();
+    const auth_err = try shared_err.readError();
     if (auth_err) |err| {
         state.auth_fails += 1;
         state.buffer.setActiveWidget(state.password_widget);
@@ -1767,8 +1781,8 @@ fn updateCapslock(self: *Label, ptr: *anyopaque) !void {
 fn updateBattery(self: *Label, ptr: *anyopaque) !void {
     var state: *UiState = @ptrCast(@alignCast(ptr));
 
-    if (state.config.battery_id) |id| {
-        const battery_percentage = getBatteryPercentage(state.io, id) catch |err| {
+    if (state.config.battery_sysctl) |mib| {
+        const battery_percentage = getBatteryPercentage(mib) catch |err| {
             self.update_fn = null;
             try state.log_file.err(
                 state.io,
@@ -2030,7 +2044,7 @@ fn positionSingleWidget(state: *UiState, item: []const u8, current_x: *usize, cu
         }
         return true;
     } else if (std.mem.eql(u8, item, "battery")) {
-        if (state.config.battery_id == null) return false;
+        if (state.config.battery_sysctl == null) return false;
         const width = TerminalBuffer.strWidth(state.battery_label.text);
         if (is_left) {
             state.battery_label.positionXY(Position.init(current_x.*, current_y));
@@ -2455,23 +2469,8 @@ fn findSessionByName(session: *Session, name: []const u8) ?usize {
     return null;
 }
 
-fn getAllUsernames(allocator: Allocator, io: std.Io, login_defs_path: []const u8, uid_range_error: *?anyerror) !StringList {
-    const uid_range = interop.getUserIdRange(allocator, io, login_defs_path) catch |err| no_uid_range: {
-        uid_range_error.* = err;
-        break :no_uid_range UidRange{
-            .uid_min = build_options.fallback_uid_min,
-            .uid_max = build_options.fallback_uid_max,
-        };
-    };
-
-    // There's no reliable (and clean) way to check for systemd support, so
-    // let's just define a range and check if a user is within it
-    const SYSTEMD_HOMED_UID_MIN = 60001;
-    const SYSTEMD_HOMED_UID_MAX = 60513;
-    const homed_uid_range = UidRange{
-        .uid_min = SYSTEMD_HOMED_UID_MIN,
-        .uid_max = SYSTEMD_HOMED_UID_MAX,
-    };
+fn getAllUsernames(allocator: Allocator) !StringList {
+    const uid_range = interop.getUserIdRange();
 
     var usernames: StringList = .empty;
     var maybe_entry = interop.getNextUsernameEntry();
@@ -2482,17 +2481,15 @@ fn getAllUsernames(allocator: Allocator, io: std.Io, login_defs_path: []const u8
         const is_within_range =
             entry.uid >= uid_range.uid_min and
             entry.uid <= uid_range.uid_max;
-        const is_within_homed_range =
-            builtin.os.tag == .linux and
-            entry.uid >= homed_uid_range.uid_min and
-            entry.uid <= homed_uid_range.uid_max;
-        const is_root =
-            entry.uid == 0 and
-            entry.username != null;
+        const is_root = entry.uid == 0;
 
-        if (is_within_range or is_within_homed_range or is_root) {
-            const username = try allocator.dupe(u8, entry.username.?);
-            try usernames.append(allocator, username);
+        // A passwd entry can carry a null name whatever its UID, so the name
+        // gates the whole thing rather than just the root case.
+        if (entry.username) |name| {
+            if (is_within_range or is_root) {
+                const username = try allocator.dupe(u8, name);
+                try usernames.append(allocator, username);
+            }
         }
 
         maybe_entry = interop.getNextUsernameEntry();
@@ -2515,35 +2512,21 @@ fn adjustBrightness(io: std.Io, cmd: []const u8) !void {
     }
 }
 
-fn getBatteryPercentage(io: std.Io, battery_id: []const u8) !u8 {
-    if (builtin.os.tag == .freebsd) {
-        // battery_id is unused on FreeBSD; sysctl exposes a single aggregate value.
-        // For multi-battery systems the MIB would be hw.acpi.battery.N.life,
-        // but hw.acpi.battery.life is the standard single-battery interface.
-        var capacity: c_int = -1;
-        var size: usize = @sizeOf(c_int);
+// Reads the remaining battery capacity, as a percentage, from the given
+// sysctl MIB (e.g. "hw.acpi.battery.life").
+fn getBatteryPercentage(mib: []const u8) !u8 {
+    var mib_buffer: [128]u8 = undefined;
+    const mib_z = std.fmt.bufPrintZ(&mib_buffer, "{s}", .{mib}) catch return error.BatterySysctlTooLong;
 
-        const ret = interop.sysctl.sysctlbyname("hw.acpi.battery.life", &capacity, &size, null, 0);
+    var capacity: c_int = -1;
+    var size: usize = @sizeOf(c_int);
 
-        if (ret != 0) return error.SysctlFailed;
-        if (capacity < 0 or capacity > 100) return error.InvalidBatteryCapacity;
+    const ret = interop.sysctl.sysctlbyname(mib_z.ptr, &capacity, &size, null, 0);
 
-        return @intCast(capacity);
-    } else {
-        const path = try std.fmt.allocPrint(temporary_allocator, "/sys/class/power_supply/{s}/capacity", .{battery_id});
-        defer temporary_allocator.free(path);
+    if (ret != 0) return error.SysctlFailed;
+    if (capacity < 0 or capacity > 100) return error.InvalidBatteryCapacity;
 
-        const battery_file = try std.Io.Dir.cwd().openFile(io, path, .{});
-        defer battery_file.close(io);
-
-        var buffer: [8]u8 = undefined;
-        const bytes_read = try battery_file.readStreaming(io, &.{&buffer});
-        const capacity_str = buffer[0..bytes_read];
-
-        const trimmed = std.mem.trimEnd(u8, capacity_str, "\n\r");
-
-        return try std.fmt.parseInt(u8, trimmed, 10);
-    }
+    return @intCast(capacity);
 }
 
 fn getAuthErrorMsg(err: anyerror, lang: Lang) []const u8 {
@@ -2575,4 +2558,10 @@ fn getAuthErrorMsg(err: anyerror, lang: Lang) []const u8 {
         error.PamAbort => lang.err_pam_abort,
         else => @errorName(err),
     };
+}
+
+test {
+    // Pulls in every module this file imports so their tests are discovered;
+    // Zig skips analysing container-level imports that nothing references.
+    std.testing.refAllDecls(@This());
 }

@@ -1,0 +1,11 @@
+# Sakura getty(8) entry.
+#
+# Append this block to /etc/gettytab (see gettytab(5)), then point the virtual
+# terminal Sakura should own at it from /etc/ttys (see ttys.example).
+#
+# "lo" replaces login(1) with Sakura's getty wrapper, and "al" makes getty
+# hand the terminal over without prompting for a user name first.
+
+sakura:\
+	:lo=$PREFIX_DIRECTORY/bin/$WRAPPER_NAME:\
+	:al=root:

@@ -1,11 +1,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const ly_ui = @import("ly-ui");
-const keyboard = ly_ui.keyboard;
-const TerminalBuffer = ly_ui.TerminalBuffer;
-const Widget = ly_ui.Widget;
-const CyclableLabel = ly_ui.CyclableLabel;
+const sakura_ui = @import("sakura-ui");
+const keyboard = sakura_ui.keyboard;
+const TerminalBuffer = sakura_ui.TerminalBuffer;
+const Widget = sakura_ui.Widget;
+const CyclableLabel = sakura_ui.CyclableLabel;
 
 const UserList = @import("UserList.zig");
 const Environment = @import("../Environment.zig");
@@ -63,7 +63,7 @@ pub fn widget(self: *Session) *Widget {
     if (self.instance) |*instance| return instance;
     self.instance = Widget.init(
         "Session",
-        self.label.keybinds,
+        &self.label.keybinds,
         self,
         deinit,
         null,

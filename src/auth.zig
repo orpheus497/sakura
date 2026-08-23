@@ -1,12 +1,11 @@
 const std = @import("std");
 const Md5 = std.crypto.hash.Md5;
-const builtin = @import("builtin");
 const build_options = @import("build_options");
 
-const ly_core = @import("ly-ui").ly_core;
-const interop = ly_core.interop;
-const SharedError = ly_core.SharedError;
-const LogFile = ly_core.LogFile;
+const sakura_core = @import("sakura-ui").sakura_core;
+const interop = sakura_core.interop;
+const SharedError = sakura_core.SharedError;
+const LogFile = sakura_core.LogFile;
 const utmp = interop.utmp;
 const Utmp = utmp.utmpx;
 
@@ -23,7 +22,6 @@ pub const AuthOptions = struct {
     x_cmd: []const u8,
     x_vt: ?u8,
     session_pid: std.posix.pid_t,
-    use_kmscon_vt: bool,
 };
 
 var xorg_pid: std.posix.pid_t = 0;
@@ -40,8 +38,10 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     var tty_buffer: [3]u8 = undefined;
     const tty_str = try std.fmt.bufPrint(&tty_buffer, "{d}", .{options.tty});
 
-    var pam_tty_buffer: [6]u8 = undefined;
-    const pam_tty_str = try std.fmt.bufPrintZ(&pam_tty_buffer, "tty{d}", .{options.tty});
+    // PAM expects the name of the TTY device, which on FreeBSD is /dev/ttyvN
+    // where N is the virtual terminal number minus one, in hexadecimal.
+    var pam_tty_buffer: [8]u8 = undefined;
+    const pam_tty_str = try interop.ttyDeviceNameZ(&pam_tty_buffer, options.tty);
 
     // Set the XDG environment variables
     try log_file.info(io, "auth/env", "setting xdg environment variables", .{});
@@ -160,7 +160,7 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     try log_file.info(io, "auth/utmp", "removing utmp entry", .{});
     removeUtmpEntry(&entry);
 
-    if (shared_err.readError()) |err| return err;
+    if (try shared_err.readError()) |err| return err;
 }
 
 fn startSession(
@@ -359,7 +359,7 @@ fn createXauthFile(log_file: *LogFile, io: std.Io, pwd: []const u8, buffer: []u8
     var xauth_buf: [100]u8 = undefined;
     var xauth_dir: []const u8 = undefined;
     const xdg_rt_dir = std.posix.system.getenv("XDG_RUNTIME_DIR");
-    var xauth_file: []const u8 = "lyxauth";
+    var xauth_file: []const u8 = "sakuraxauth";
 
     if (xdg_rt_dir == null) no_rt_dir: {
         const xdg_cfg_home = std.posix.system.getenv("XDG_CONFIG_HOME");
@@ -369,15 +369,15 @@ fn createXauthFile(log_file: *LogFile, io: std.Io, pwd: []const u8, buffer: []u8
             var dir = std.Io.Dir.cwd().openDir(io, xauth_dir, .{}) catch {
                 // xauth_dir isn't a directory
                 xauth_dir = pwd;
-                xauth_file = ".lyxauth";
+                xauth_file = ".sakuraxauth";
                 break :no_cfg_home;
             };
             dir.close(io);
 
             // xauth_dir is a directory, use it to store Xauthority
-            xauth_dir = try std.fmt.bufPrint(&xauth_buf, "{s}/.config/ly", .{pwd});
+            xauth_dir = try std.fmt.bufPrint(&xauth_buf, "{s}/.config/sakura", .{pwd});
         } else {
-            xauth_dir = try std.fmt.bufPrint(&xauth_buf, "{s}/ly", .{std.mem.span(xdg_cfg_home.?)});
+            xauth_dir = try std.fmt.bufPrint(&xauth_buf, "{s}/sakura", .{std.mem.span(xdg_cfg_home.?)});
         }
 
         const file = std.Io.Dir.cwd().openFile(io, xauth_dir, .{}) catch break :no_rt_dir;
@@ -386,7 +386,7 @@ fn createXauthFile(log_file: *LogFile, io: std.Io, pwd: []const u8, buffer: []u8
         // xauth_dir is a file, create the parent directory
         std.Io.Dir.createDirAbsolute(io, xauth_dir, .fromMode(777)) catch {
             xauth_dir = pwd;
-            xauth_file = ".lyxauth";
+            xauth_file = ".sakuraxauth";
         };
     } else {
         xauth_dir = std.mem.span(xdg_rt_dir.?);
@@ -508,7 +508,7 @@ fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, s
     xorg_pid = std.posix.system.fork();
     if (xorg_pid == 0) {
         var cmd_buffer: [1024]u8 = undefined;
-        const cmd_str = std.fmt.bufPrintZ(&cmd_buffer, "{s} {s} {s} {s}", .{ if (options.use_kmscon_vt) "kmscon-launch-gui" else "", options.setup_cmd, options.login_cmd orelse "", desktop_cmd }) catch std.process.exit(1);
+        const cmd_str = std.fmt.bufPrintZ(&cmd_buffer, "{s} {s} {s}", .{ options.setup_cmd, options.login_cmd orelse "", desktop_cmd }) catch std.process.exit(1);
         try log_file.info(io, "auth/x11", "executing: {s} -c {s}", .{ shell, cmd_str });
 
         const args = [_:null]?[*:0]const u8{ shell_z, "-c", cmd_str };
@@ -543,12 +543,7 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
     try global_log_file.info(io, "auth/sys", "launching wayland/shell/custom session", .{});
 
     var maybe_log_file: ?std.Io.File = null;
-    if (!is_terminal) redirect_streams: {
-        if (options.use_kmscon_vt) {
-            try global_log_file.err(io, "auth/sys", "cannot redirect stdio & stderr with kmscon", .{});
-            break :redirect_streams;
-        }
-
+    if (!is_terminal) {
         // For custom desktop entries, the "Terminal" value here determines if
         // we redirect standard output & error or not. That is, we redirect only
         // if it's equal to false (so if it's not running in a TTY).
@@ -563,7 +558,7 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
     defer allocator.free(shell_z);
 
     var cmd_buffer: [1024]u8 = undefined;
-    const cmd_str = try std.fmt.bufPrintZ(&cmd_buffer, "{s} {s} {s} {s}", .{ if (!is_terminal and options.use_kmscon_vt) "kmscon-launch-gui" else "", options.setup_cmd, options.login_cmd orelse "", exec_cmd orelse shell });
+    const cmd_str = try std.fmt.bufPrintZ(&cmd_buffer, "{s} {s} {s}", .{ options.setup_cmd, options.login_cmd orelse "", exec_cmd orelse shell });
 
     try global_log_file.info(io, "auth/sys", "executing: {s} -c {s}", .{ shell, cmd_str });
     const args = [_:null]?[*:0]const u8{ shell_z, "-c", cmd_str };
@@ -634,11 +629,6 @@ fn addUtmpEntry(io: std.Io, entry: *Utmp, username: []const u8, pid: c_int) !voi
         .tv_sec = @intCast(time.seconds),
         .tv_usec = @intCast(time.microseconds),
     };
-
-    // FreeBSD doesn't have this field
-    if (builtin.os.tag == .linux) {
-        entry.ut_addr_v6[0] = 0;
-    }
 
     utmp.setutxent();
     _ = utmp.pututxline(entry);

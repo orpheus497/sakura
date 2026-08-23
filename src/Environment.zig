@@ -1,4 +1,4 @@
-const ini = @import("ly-ui").ly_core.ini;
+const ini = @import("sakura-ui").sakura_core.ini;
 const Ini = ini.Ini;
 
 const enums = @import("enums.zig");
