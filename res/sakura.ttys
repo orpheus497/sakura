@@ -1,0 +1,11 @@
+# Sakura ttys(5) entry.
+#
+# Replace the existing $TTY_DEVICE line in /etc/ttys with the one below so that
+# init(8) starts getty(8) with the "sakura" entry from /etc/gettytab on it.
+#
+# FreeBSD numbers virtual terminals from 1 but names their device nodes from 0,
+# so virtual terminal $DEFAULT_TTY is /dev/$TTY_DEVICE.
+#
+# Run "kill -HUP 1" after editing /etc/ttys to make init(8) pick up the change.
+
+$TTY_DEVICE	"/usr/libexec/getty sakura"	xterm	onifexists	secure

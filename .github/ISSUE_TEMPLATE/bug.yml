@@ -11,9 +11,9 @@ body:
       options:
         - label: I have looked for any other duplicate issues
           required: true
-        - label: I have reproduced the issue with the default config of Ly
+        - label: I have reproduced the issue with the default config of Sakura
           required: true
-        - label: I have reproduced the issue on a fresh install of Ly **as well as** my OS and my desktop environment/window manager, all with **default settings**, except ones I will mention
+        - label: I have reproduced the issue on a fresh install of Sakura **as well as** FreeBSD and my desktop environment/window manager, all with **default settings**, except ones I will mention
           required: false
         - label: I have confirmed this issue also occurs on the latest development version (found in the `master` branch)
           required: true
@@ -22,9 +22,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: Ly version
-      description: The output of `ly --version`. Please note that only the latest release and the current version in development are supported.
-      placeholder: 1.1.0-dev.12+2b0301c
+      label: Sakura version
+      description: The output of `sakura --version`. Please note that only the latest release and the current version in development are supported.
+      placeholder: 1.0.0-dev.12+2b0301c
     validations:
       required: true
   - type: textarea
@@ -44,17 +44,17 @@ body:
   - type: input
     id: desktop
     attributes:
-      label: OS + Desktop environment/Window manager
-      description: Which operating system and DE (or WM) did you use when observing the problem?
+      label: Desktop environment/Window manager
+      description: Which DE (or WM) did you use when observing the problem?
     validations:
       required: true
   - type: input
     id: osimage
     attributes:
-      label: OS version/snapshot used to reproduce
-      description: Which version (or snapshot if rolling release) of the OS did you use to reproduce the issue? This is only required if you have reproduced the issue on a fresh copy of the OS.
+      label: FreeBSD version
+      description: The output of `freebsd-version -kru` and `uname -a`.
     validations:
-      required: false
+      required: true
   - type: textarea
     id: reproduction
     attributes:
@@ -73,9 +73,9 @@ body:
     attributes:
       label: Relevant logs
       description: |
-        Please copy and paste (or attach) any relevant logs, error messages or any other output. This will be automatically formatted into code, so no need for backticks. Screenshots are accepted if they make life easier for you. The log files (located as specified by `/etc/ly/config.ini`) usually contain relevant information about the problem:
-         - The session log is located at `~/.local/state/ly-session.log` by default.
-         - The system log is located at `/var/log/ly.log` by default.
+        Please copy and paste (or attach) any relevant logs, error messages or any other output. This will be automatically formatted into code, so no need for backticks. Screenshots are accepted if they make life easier for you. The log files (located as specified by `/usr/local/etc/sakura/config.ini`) usually contain relevant information about the problem:
+         - The session log is located at `~/.local/state/sakura-session.log` by default.
+         - The system log is located at `/var/log/sakura.log` by default.
       render: shell
   - type: textarea
     id: moreinfo

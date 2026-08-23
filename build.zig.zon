@@ -1,11 +1,11 @@
 .{
-    .name = .ly,
-    .version = "1.5.0",
-    .fingerprint = 0xa148ffcc5dc2cb59,
+    .name = .sakura,
+    .version = "1.0.0",
+    .fingerprint = 0x018710325dc2cb59,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        .ly_ui = .{
-            .path = "ly-ui",
+        .sakura_ui = .{
+            .path = "sakura-ui",
         },
         .clap = .{
             .url = "git+https://github.com/Hejsil/zig-clap#fc1e5cc3f6d9d3001112385ee6256d694e959d2f",
@@ -19,6 +19,8 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
+        "install.zig",
         "src",
+        "res",
     },
 }

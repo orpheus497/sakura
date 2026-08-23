@@ -1,6 +1,9 @@
 const std = @import("std");
+const build_options = @import("build_options");
 
-// We set both values to 0 by default so that, in case they aren't present in
-// the login.defs for some reason, then only the root username will be shown
-uid_min: std.posix.uid_t = 0,
-uid_max: std.posix.uid_t = 0,
+// The range of UIDs Sakura considers to be "regular" user accounts. FreeBSD
+// has no /etc/login.defs, so the bounds come from the values baked into the
+// binary at build time (see the -Duid_min and -Duid_max build options), which
+// default to the ones pw(8) uses (see /usr/src/usr.sbin/pw/pw_conf.c).
+uid_min: std.posix.uid_t = build_options.uid_min,
+uid_max: std.posix.uid_t = build_options.uid_max,

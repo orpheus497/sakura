@@ -1,15 +1,6 @@
 const std = @import("std");
 
 const PatchMap = std.StringHashMap([]const u8);
-const InitSystem = enum {
-    systemd,
-    openrc,
-    runit,
-    s6,
-    dinit,
-    sysvinit,
-    freebsd,
-};
 const InstallType = enum {
     installexe,
     installnoconf,
@@ -21,7 +12,7 @@ var dest_directory: []const u8 = undefined;
 var config_directory: []const u8 = undefined;
 var prefix_directory: []const u8 = undefined;
 var executable_name: []const u8 = undefined;
-var init_system: InitSystem = undefined;
+var wrapper_name: []const u8 = undefined;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -35,75 +26,79 @@ pub fn main(init: std.process.Init) !void {
     config_directory = args.next().?;
     prefix_directory = args.next().?;
     executable_name = args.next().?;
-    init_system = std.meta.stringToEnum(InitSystem, args.next().?).?;
     const default_tty_str = args.next().?;
+
+    wrapper_name = try std.fmt.allocPrint(allocator, "{s}_wrapper", .{executable_name});
+    defer allocator.free(wrapper_name);
 
     switch (install_type) {
         .installexe, .installnoconf => {
+            // FreeBSD numbers virtual terminals from 1, but names the device
+            // nodes backing them from 0, using a single hexadecimal digit:
+            // VT 2 is /dev/ttyv1, VT 11 is /dev/ttyva.
+            const default_tty = std.fmt.parseInt(u8, default_tty_str, 10) catch 2;
+            const tty_device = try std.fmt.allocPrint(allocator, "ttyv{x}", .{default_tty -| 1});
+            defer allocator.free(tty_device);
+
             var patch_map = PatchMap.init(allocator);
             defer patch_map.deinit();
 
             try patch_map.put("$DEFAULT_TTY", default_tty_str);
+            try patch_map.put("$TTY_DEVICE", tty_device);
             try patch_map.put("$CONFIG_DIRECTORY", config_directory);
             try patch_map.put("$PREFIX_DIRECTORY", prefix_directory);
             try patch_map.put("$EXECUTABLE_NAME", executable_name);
+            try patch_map.put("$WRAPPER_NAME", wrapper_name);
 
-            try installLy(allocator, io, patch_map, install_type == .installexe);
-            try installService(allocator, io, patch_map);
+            try installSakura(allocator, io, patch_map, install_type == .installexe);
+            try installGettyWrapper(allocator, io, patch_map);
+
+            std.debug.print(
+                \\
+                \\info: Sakura is installed. Two steps are left, both of which
+                \\      have a ready-made snippet in {s}/sakura:
+                \\
+                \\      1. Append the contents of gettytab.example to /etc/gettytab
+                \\      2. Replace the {s} line in /etc/ttys with the one in ttys.example
+                \\
+                \\      Then run `kill -HUP 1` or reboot.
+                \\
+                \\
+            , .{ config_directory, tty_device });
         },
         .uninstallexe, .uninstallnoconf => {
             if (install_type == .uninstallexe) {
-                try deleteTree(allocator, io, config_directory, "/ly", "ly config directory not found");
+                try deleteTree(allocator, io, config_directory, "/sakura", "sakura config directory not found");
             }
 
-            const exe_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ prefix_directory, "/bin/", executable_name });
-            defer allocator.free(exe_path);
-
-            var success = true;
-            std.Io.Dir.cwd().deleteFile(io, exe_path) catch {
-                std.debug.print("warn: ly executable not found\n", .{});
-                success = false;
-            };
-            if (success) std.debug.print("info: deleted {s}\n", .{exe_path});
-
-            try deleteFile(allocator, io, config_directory, "/pam.d/ly", "ly pam file not found");
-
-            switch (init_system) {
-                .systemd => try deleteFile(allocator, io, prefix_directory, "/lib/systemd/system/ly@.service", "systemd service not found"),
-                .openrc => try deleteFile(allocator, io, config_directory, "/init.d/ly", "openrc service not found"),
-                .runit => try deleteTree(allocator, io, config_directory, "/sv/ly", "runit service not found"),
-                .s6 => {
-                    try deleteTree(allocator, io, config_directory, "/s6/sv/ly-srv", "s6 service not found");
-                    try deleteFile(allocator, io, config_directory, "/s6/adminsv/default/contents.d/ly-srv", "s6 admin service not found");
-                },
-                .dinit => try deleteFile(allocator, io, config_directory, "/dinit.d/ly", "dinit service not found"),
-                .sysvinit => try deleteFile(allocator, io, config_directory, "/init.d/ly", "sysvinit service not found"),
-                .freebsd => try deleteFile(allocator, io, prefix_directory, "/bin/ly_wrapper", "freebsd wrapper not found"),
-            }
+            try deleteFile(allocator, io, prefix_directory, "/bin/", executable_name, "sakura executable not found");
+            try deleteFile(allocator, io, prefix_directory, "/bin/", wrapper_name, "getty wrapper not found");
+            try deleteFile(allocator, io, config_directory, "/pam.d/", "sakura", "sakura pam file not found");
+            try deleteFile(allocator, io, config_directory, "/pam.d/", "sakura-autologin", "sakura autologin pam file not found");
         },
     }
 }
 
-fn installLy(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, install_config: bool) !void {
-    const ly_config_directory = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/ly" });
-    defer allocator.free(ly_config_directory);
+fn installSakura(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, install_config: bool) !void {
+    const sakura_config_directory = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/sakura" });
+    defer allocator.free(sakura_config_directory);
 
-    std.Io.Dir.cwd().createDirPath(io, ly_config_directory) catch {
-        std.debug.print("warn: {s} already exists as a directory.\n", .{ly_config_directory});
+    std.Io.Dir.cwd().createDirPath(io, sakura_config_directory) catch {
+        std.debug.print("warn: {s} already exists as a directory.\n", .{sakura_config_directory});
     };
 
-    const ly_custom_sessions_directory = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/ly/custom-sessions" });
-    defer allocator.free(ly_custom_sessions_directory);
+    const sakura_custom_sessions_directory = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/sakura/custom-sessions" });
+    defer allocator.free(sakura_custom_sessions_directory);
 
-    std.Io.Dir.cwd().createDirPath(io, ly_custom_sessions_directory) catch {
-        std.debug.print("warn: {s} already exists as a directory.\n", .{ly_custom_sessions_directory});
+    std.Io.Dir.cwd().createDirPath(io, sakura_custom_sessions_directory) catch {
+        std.debug.print("warn: {s} already exists as a directory.\n", .{sakura_custom_sessions_directory});
     };
 
-    const ly_lang_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/ly/lang" });
-    defer allocator.free(ly_lang_path);
+    const sakura_lang_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/sakura/lang" });
+    defer allocator.free(sakura_lang_path);
 
-    std.Io.Dir.cwd().createDirPath(io, ly_lang_path) catch {
-        std.debug.print("warn: {s} already exists as a directory.\n", .{ly_lang_path});
+    std.Io.Dir.cwd().createDirPath(io, sakura_lang_path) catch {
+        std.debug.print("warn: {s} already exists as a directory.\n", .{sakura_lang_path});
     };
 
     {
@@ -119,49 +114,60 @@ fn installLy(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, inst
         var executable_dir = std.Io.Dir.cwd().openDir(io, exe_path, .{}) catch unreachable;
         defer executable_dir.close(io);
 
-        try installFile(io, "zig-out/bin/ly", executable_dir, exe_path, executable_name, .{});
+        try installFile(io, "zig-out/bin/sakura", executable_dir, exe_path, executable_name, .{});
     }
 
     {
-        var config_dir = std.Io.Dir.cwd().openDir(io, ly_config_directory, .{}) catch unreachable;
+        var config_dir = std.Io.Dir.cwd().openDir(io, sakura_config_directory, .{}) catch unreachable;
         defer config_dir.close(io);
 
         if (install_config) {
             const patched_config = try patchFile(allocator, io, "res/config.ini", patch_map);
             defer allocator.free(patched_config);
 
-            try installText(io, patched_config, config_dir, ly_config_directory, "config.ini", .{});
+            try installText(io, patched_config, config_dir, sakura_config_directory, "config.ini", .{});
 
-            try installFile(io, "res/startup.sh", config_dir, ly_config_directory, "startup.sh", .{ .permissions = .fromMode(0o755) });
+            try installFile(io, "res/startup.sh", config_dir, sakura_config_directory, "startup.sh", .{ .permissions = .fromMode(0o755) });
         }
 
         const patched_example_config = try patchFile(allocator, io, "res/config.ini", patch_map);
         defer allocator.free(patched_example_config);
 
-        try installText(io, patched_example_config, config_dir, ly_config_directory, "config.ini.example", .{});
+        try installText(io, patched_example_config, config_dir, sakura_config_directory, "config.ini.example", .{});
 
         const patched_setup = try patchFile(allocator, io, "res/setup.sh", patch_map);
         defer allocator.free(patched_setup);
 
-        try installText(io, patched_setup, config_dir, ly_config_directory, "setup.sh", .{ .permissions = .fromMode(0o755) });
+        try installText(io, patched_setup, config_dir, sakura_config_directory, "setup.sh", .{ .permissions = .fromMode(0o755) });
 
-        try installFile(io, "res/example.dur", config_dir, ly_config_directory, "example.dur", .{ .permissions = .fromMode(0o755) });
+        // Ready-made /etc/gettytab and /etc/ttys snippets for the administrator
+        const patched_gettytab = try patchFile(allocator, io, "res/sakura.gettytab", patch_map);
+        defer allocator.free(patched_gettytab);
 
-        try installFile(io, "res/example.lua", config_dir, ly_config_directory, "example.lua", .{ .permissions = .fromMode(0o755) });
+        try installText(io, patched_gettytab, config_dir, sakura_config_directory, "gettytab.example", .{});
+
+        const patched_ttys = try patchFile(allocator, io, "res/sakura.ttys", patch_map);
+        defer allocator.free(patched_ttys);
+
+        try installText(io, patched_ttys, config_dir, sakura_config_directory, "ttys.example", .{});
+
+        try installFile(io, "res/example.dur", config_dir, sakura_config_directory, "example.dur", .{ .permissions = .fromMode(0o755) });
+
+        try installFile(io, "res/example.lua", config_dir, sakura_config_directory, "example.lua", .{ .permissions = .fromMode(0o755) });
     }
 
     {
-        var custom_sessions_dir = std.Io.Dir.cwd().openDir(io, ly_custom_sessions_directory, .{}) catch unreachable;
+        var custom_sessions_dir = std.Io.Dir.cwd().openDir(io, sakura_custom_sessions_directory, .{}) catch unreachable;
         defer custom_sessions_dir.close(io);
 
         const patched_readme = try patchFile(allocator, io, "res/custom-sessions/README", patch_map);
         defer allocator.free(patched_readme);
 
-        try installText(io, patched_readme, custom_sessions_dir, ly_custom_sessions_directory, "README", .{});
+        try installText(io, patched_readme, custom_sessions_dir, sakura_custom_sessions_directory, "README", .{});
     }
 
     {
-        var lang_dir = std.Io.Dir.cwd().openDir(io, ly_lang_path, .{}) catch unreachable;
+        var lang_dir = std.Io.Dir.cwd().openDir(io, sakura_lang_path, .{}) catch unreachable;
         defer lang_dir.close(io);
 
         const languages = [_][]const u8{
@@ -193,7 +199,7 @@ fn installLy(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, inst
         };
 
         inline for (languages) |language| {
-            try installFile(io, "res/lang/" ++ language, lang_dir, ly_lang_path, language, .{});
+            try installFile(io, "res/lang/" ++ language, lang_dir, sakura_lang_path, language, .{});
         }
     }
 
@@ -210,140 +216,25 @@ fn installLy(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, inst
         var pam_dir = std.Io.Dir.cwd().openDir(io, pam_path, .{}) catch unreachable;
         defer pam_dir.close(io);
 
-        try installFile(io, if (init_system == .freebsd) "res/pam.d/ly-freebsd" else "res/pam.d/ly-linux", pam_dir, pam_path, "ly", .{ .permissions = .fromMode(0o644) });
-        try installFile(io, if (init_system == .freebsd) "res/pam.d/ly-freebsd-autologin" else "res/pam.d/ly-linux-autologin", pam_dir, pam_path, "ly-autologin", .{ .permissions = .fromMode(0o644) });
+        try installFile(io, "res/pam.d/sakura", pam_dir, pam_path, "sakura", .{ .permissions = .fromMode(0o644) });
+        try installFile(io, "res/pam.d/sakura-autologin", pam_dir, pam_path, "sakura-autologin", .{ .permissions = .fromMode(0o644) });
     }
 }
 
-fn installService(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap) !void {
-    switch (init_system) {
-        .systemd => {
-            const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, prefix_directory, "/lib/systemd/system" });
-            defer allocator.free(service_path);
+// On FreeBSD, getty(8) appends "login -fp root" to the program named by the
+// "lo" capability, which Sakura does not understand. A small wrapper script
+// swallows those arguments.
+fn installGettyWrapper(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap) !void {
+    const exe_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, prefix_directory, "/bin" });
+    defer allocator.free(exe_path);
 
-            std.Io.Dir.cwd().createDirPath(io, service_path) catch {};
-            var service_dir = std.Io.Dir.cwd().openDir(io, service_path, .{}) catch unreachable;
-            defer service_dir.close(io);
+    var executable_dir = std.Io.Dir.cwd().openDir(io, exe_path, .{}) catch unreachable;
+    defer executable_dir.close(io);
 
-            const patched_service = try patchFile(allocator, io, "res/ly@.service", patch_map);
-            defer allocator.free(patched_service);
+    const patched_wrapper = try patchFile(allocator, io, "res/sakura-wrapper", patch_map);
+    defer allocator.free(patched_wrapper);
 
-            try installText(io, patched_service, service_dir, service_path, "ly@.service", .{ .permissions = .fromMode(0o644) });
-
-            const patched_kmsconvt_service = try patchFile(allocator, io, "res/ly-kmsconvt@.service", patch_map);
-            defer allocator.free(patched_kmsconvt_service);
-
-            try installText(io, patched_kmsconvt_service, service_dir, service_path, "ly-kmsconvt@.service", .{ .permissions = .fromMode(0o644) });
-        },
-        .openrc => {
-            const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/init.d" });
-            defer allocator.free(service_path);
-
-            std.Io.Dir.cwd().createDirPath(io, service_path) catch {};
-            var service_dir = std.Io.Dir.cwd().openDir(io, service_path, .{}) catch unreachable;
-            defer service_dir.close(io);
-
-            const patched_service = try patchFile(allocator, io, "res/ly-openrc", patch_map);
-            defer allocator.free(patched_service);
-
-            try installText(io, patched_service, service_dir, service_path, executable_name, .{ .permissions = .fromMode(0o755) });
-        },
-        .runit => {
-            const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/sv/ly" });
-            defer allocator.free(service_path);
-
-            std.Io.Dir.cwd().createDirPath(io, service_path) catch {};
-            var service_dir = std.Io.Dir.cwd().openDir(io, service_path, .{}) catch unreachable;
-            defer service_dir.close(io);
-
-            const supervise_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ service_path, "supervise" });
-            defer allocator.free(supervise_path);
-
-            const patched_conf = try patchFile(allocator, io, "res/ly-runit-service/conf", patch_map);
-            defer allocator.free(patched_conf);
-
-            try installText(io, patched_conf, service_dir, service_path, "conf", .{});
-
-            try installFile(io, "res/ly-runit-service/finish", service_dir, service_path, "finish", .{ .permissions = .fromMode(0o755) });
-
-            const patched_run = try patchFile(allocator, io, "res/ly-runit-service/run", patch_map);
-            defer allocator.free(patched_run);
-
-            try installText(io, patched_run, service_dir, service_path, "run", .{ .permissions = .fromMode(0o755) });
-
-            std.Io.Dir.cwd().symLink(io, "/run/runit/supervise.ly", supervise_path, .{}) catch |err| {
-                if (err == error.PathAlreadyExists) {
-                    std.debug.print("warn: /run/runit/supervise.ly already exists as a symbolic link.\n", .{});
-                } else {
-                    return err;
-                }
-            };
-            std.debug.print("info: installed symlink /run/runit/supervise.ly\n", .{});
-        },
-        .s6 => {
-            const admin_service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/s6/adminsv/default/contents.d" });
-            std.Io.Dir.cwd().createDirPath(io, admin_service_path) catch {};
-            defer allocator.free(admin_service_path);
-
-            var admin_service_dir = std.Io.Dir.cwd().openDir(io, admin_service_path, .{}) catch unreachable;
-            defer admin_service_dir.close(io);
-
-            const file = try admin_service_dir.createFile(io, "ly-srv", .{});
-            file.close(io);
-
-            const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/s6/sv/ly-srv" });
-            defer allocator.free(service_path);
-
-            std.Io.Dir.cwd().createDirPath(io, service_path) catch {};
-            var service_dir = std.Io.Dir.cwd().openDir(io, service_path, .{}) catch unreachable;
-            defer service_dir.close(io);
-
-            const patched_run = try patchFile(allocator, io, "res/ly-s6/run", patch_map);
-            defer allocator.free(patched_run);
-
-            try installText(io, patched_run, service_dir, service_path, "run", .{ .permissions = .fromMode(0o755) });
-
-            try installFile(io, "res/ly-s6/type", service_dir, service_path, "type", .{});
-        },
-        .dinit => {
-            const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/dinit.d" });
-            defer allocator.free(service_path);
-
-            std.Io.Dir.cwd().createDirPath(io, service_path) catch {};
-            var service_dir = std.Io.Dir.cwd().openDir(io, service_path, .{}) catch unreachable;
-            defer service_dir.close(io);
-
-            const patched_service = try patchFile(allocator, io, "res/ly-dinit", patch_map);
-            defer allocator.free(patched_service);
-
-            try installText(io, patched_service, service_dir, service_path, "ly", .{});
-        },
-        .sysvinit => {
-            const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/init.d" });
-            defer allocator.free(service_path);
-
-            std.Io.Dir.cwd().createDirPath(io, service_path) catch {};
-            var service_dir = std.Io.Dir.cwd().openDir(io, service_path, .{}) catch unreachable;
-            defer service_dir.close(io);
-
-            const patched_service = try patchFile(allocator, io, "res/ly-sysvinit", patch_map);
-            defer allocator.free(patched_service);
-
-            try installText(io, patched_service, service_dir, service_path, "ly", .{ .permissions = .fromMode(0o755) });
-        },
-        .freebsd => {
-            const exe_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, prefix_directory, "/bin" });
-            defer allocator.free(exe_path);
-
-            var executable_dir = std.Io.Dir.cwd().openDir(io, exe_path, .{}) catch unreachable;
-            defer executable_dir.close(io);
-
-            const patched_wrapper = try patchFile(allocator, io, "res/ly-freebsd-wrapper", patch_map);
-            defer allocator.free(patched_wrapper);
-
-            try installText(io, patched_wrapper, executable_dir, exe_path, "ly_wrapper", .{ .permissions = .fromMode(0o755) });
-        },
-    }
+    try installText(io, patched_wrapper, executable_dir, exe_path, wrapper_name, .{ .permissions = .fromMode(0o755) });
 }
 
 fn installFile(
@@ -401,10 +292,11 @@ fn deleteFile(
     allocator: std.mem.Allocator,
     io: std.Io,
     prefix: []const u8,
+    directory: []const u8,
     file: []const u8,
     warning: []const u8,
 ) !void {
-    const path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, prefix, file });
+    const path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, prefix, directory, file });
     defer allocator.free(path);
 
     std.Io.Dir.cwd().deleteFile(io, path) catch |err| {

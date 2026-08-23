@@ -1,21 +1,25 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const build_options = @import("build_options");
 const UidRange = @import("UidRange.zig");
+const consio = @import("consio");
+const kbio = @import("kbio");
 const pwd = @import("pwd");
+const reboot = @import("reboot");
 const stdlib = @import("stdlib");
-const unistd = @import("unistd");
-const grp = @import("grp");
 const system_time = @import("system_time");
 const time = @import("time");
+const unistd = @import("unistd");
 
 pub const pam = @import("pam");
 pub const utmp = @import("utmp");
-// Exists for X11 support only
-pub const xcb = @import("xcb");
-
-// FreeBSD only
 pub const sysctl = @import("sysctl");
+// Exists for X11 support only, so it is only imported when X11 support was
+// enabled at build time.
+pub const xcb = if (build_options.enable_x11_support) @import("xcb") else struct {};
+
+/// The FreeBSD console driver reports and sets the keyboard LEDs as an `int`
+/// bit mask.
+const LedState = c_int;
 
 pub const TimeOfDay = struct {
     seconds: i64,
@@ -31,269 +35,16 @@ pub const UsernameEntry = struct {
     passwd_struct: [*]pwd.passwd,
 };
 
-// Contains the platform-specific code
-fn PlatformStruct() type {
-    return switch (builtin.os.tag) {
-        .linux => struct {
-            pub const kd = @import("kd");
-            pub const vt = @import("vt");
-
-            pub const LedState = c_char;
-            pub const get_led_state = kd.KDGKBLED;
-            pub const set_led_state = kd.KDSKBLED;
-            pub const numlock_led = kd.K_NUMLOCK;
-            pub const capslock_led = kd.K_CAPSLOCK;
-            pub const vt_activate = vt.VT_ACTIVATE;
-            pub const vt_waitactive = vt.VT_WAITACTIVE;
-
-            pub fn setUserContextImpl(username: [*:0]const u8, entry: UsernameEntry) !void {
-                const status = grp.initgroups(username, @intCast(entry.gid));
-                if (status != 0) return error.GroupInitializationFailed;
-
-                if (isError(std.posix.system.setgid(@intCast(entry.gid)))) return error.SetUserGidFailed;
-                if (isError(std.posix.system.setuid(@intCast(entry.uid)))) return error.SetUserUidFailed;
-            }
-
-            // Procedure:
-            // 1. Open /proc/self/stat to retrieve the tty_nr field
-            // 2. Parse the tty_nr field to extract the major and minor device
-            //    numbers
-            // 3. Then, read every /sys/class/tty/[dir]/dev, where [dir] is
-            //    every sub-directory
-            // 4. Finally, compare the major and minor device numbers with the
-            //    extracted values. If they correspond, parse [dir] to get the
-            //    TTY ID
-            pub fn getActiveTtyImpl(allocator: std.mem.Allocator, io: std.Io, use_kmscon_vt: bool) !u8 {
-                var file_buffer: [256]u8 = undefined;
-
-                if (use_kmscon_vt) {
-                    var file = try std.Io.Dir.openFileAbsolute(io, "/sys/class/tty/tty0/active", .{});
-                    defer file.close(io);
-
-                    var reader = file.reader(io, &file_buffer);
-                    var buffer: [16]u8 = undefined;
-                    const read = try readBuffer(&reader.interface, &buffer);
-
-                    const tty = buffer[0..(read - 1)];
-                    return std.fmt.parseInt(u8, tty["tty".len..], 10);
-                }
-
-                var tty_major: u16 = undefined;
-                var tty_minor: u16 = undefined;
-
-                {
-                    var file = try std.Io.Dir.openFileAbsolute(io, "/proc/self/stat", .{});
-                    defer file.close(io);
-
-                    var reader = file.reader(io, &file_buffer);
-                    var buffer: [1024]u8 = undefined;
-                    const read = try readBuffer(&reader.interface, &buffer);
-
-                    var iterator = std.mem.splitScalar(u8, buffer[0..read], ' ');
-                    var fields: [52][]const u8 = undefined;
-                    var index: usize = 0;
-
-                    while (iterator.next()) |field| {
-                        fields[index] = field;
-                        index += 1;
-                    }
-
-                    const tty_nr = try std.fmt.parseInt(u16, fields[6], 10);
-                    tty_major = tty_nr / 256;
-                    tty_minor = tty_nr % 256;
-                }
-
-                var directory = try std.Io.Dir.openDirAbsolute(io, "/sys/class/tty", .{ .iterate = true });
-                defer directory.close(io);
-
-                var iterator = directory.iterate();
-                while (try iterator.next(io)) |entry| {
-                    const path = try std.fmt.allocPrint(allocator, "/sys/class/tty/{s}/dev", .{entry.name});
-                    defer allocator.free(path);
-
-                    var file = try std.Io.Dir.openFileAbsolute(io, path, .{});
-                    defer file.close(io);
-
-                    var reader = file.reader(io, &file_buffer);
-                    var buffer: [16]u8 = undefined;
-                    const read = try readBuffer(&reader.interface, &buffer);
-
-                    var device_iterator = std.mem.splitScalar(u8, buffer[0..(read - 1)], ':');
-                    const device_major_str = device_iterator.next() orelse continue;
-                    const device_minor_str = device_iterator.next() orelse continue;
-
-                    const device_major = try std.fmt.parseInt(u8, device_major_str, 10);
-                    const device_minor = try std.fmt.parseInt(u8, device_minor_str, 10);
-
-                    if (device_major == tty_major and device_minor == tty_minor) {
-                        const tty_id_str = entry.name["tty".len..];
-                        return try std.fmt.parseInt(u8, tty_id_str, 10);
-                    }
-                }
-
-                return error.NoTtyFound;
-            }
-
-            // This is very bad parsing, but we only need to get 2 values..
-            // and the format of the file seems to be standard? So this should
-            // be fine...
-            pub fn getUserIdRange(allocator: std.mem.Allocator, io: std.Io, file_path: []const u8) !UidRange {
-                const login_defs_file = try std.Io.Dir.cwd().openFile(io, file_path, .{});
-                defer login_defs_file.close(io);
-
-                var buffer: [4096]u8 = undefined;
-                var reader = login_defs_file.reader(io, &buffer);
-
-                const login_defs_buffer = try reader.interface.allocRemaining(allocator, .unlimited);
-                defer allocator.free(login_defs_buffer);
-
-                var iterator = std.mem.splitScalar(u8, login_defs_buffer, '\n');
-                var uid_range = UidRange{};
-                var uid_min_Found = false;
-                var uid_max_Found = false;
-
-                while (iterator.next()) |line| {
-                    const trimmed_line = std.mem.trim(u8, line, " \n\r\t");
-
-                    if (std.mem.startsWith(u8, trimmed_line, "UID_MIN")) {
-                        uid_range.uid_min = try parseValue(std.posix.uid_t, "UID_MIN", trimmed_line);
-                        uid_min_Found = true;
-                    } else if (std.mem.startsWith(u8, trimmed_line, "UID_MAX")) {
-                        uid_range.uid_max = try parseValue(std.posix.uid_t, "UID_MAX", trimmed_line);
-                        uid_max_Found = true;
-                    }
-                }
-
-                if (!(uid_min_Found or uid_max_Found)) {
-                    return error.UidNameNotFound;
-                }
-
-                if (!uid_min_Found) {
-                    uid_range.uid_min = build_options.fallback_uid_min;
-                }
-
-                if (!uid_max_Found) {
-                    uid_range.uid_max = build_options.fallback_uid_max;
-                }
-
-                return uid_range;
-            }
-
-            pub fn shutdownSystemImpl() !void {
-                std.posix.system.sync();
-                if (isError(std.os.linux.reboot(.MAGIC1, .MAGIC2, .POWER_OFF, null))) {
-                    return error.CouldntShutdown;
-                }
-            }
-
-            pub fn rebootSystemImpl() !void {
-                std.posix.system.sync();
-                if (isError(std.os.linux.reboot(.MAGIC1, .MAGIC2, .RESTART, null))) {
-                    return error.CouldntShutdown;
-                }
-            }
-
-            fn parseValue(comptime T: type, name: []const u8, buffer: []const u8) !T {
-                var iterator = std.mem.splitAny(u8, buffer, " \t");
-                var maybe_value: ?T = null;
-
-                while (iterator.next()) |slice| {
-                    // Skip the slice if it's empty (whitespace) or is the name of the
-                    // property (e.g. UID_MIN or UID_MAX)
-                    if (slice.len == 0 or std.mem.eql(u8, slice, name)) continue;
-                    maybe_value = std.fmt.parseInt(T, slice, 10) catch continue;
-                }
-
-                return maybe_value orelse error.ValueNotFound;
-            }
-
-            fn readBuffer(reader: *std.Io.Reader, buffer: []u8) !usize {
-                var bytes_read: usize = 0;
-                var byte: u8 = try reader.takeByte();
-
-                while (byte != 0 and bytes_read < buffer.len) {
-                    buffer[bytes_read] = byte;
-                    bytes_read += 1;
-                    byte = reader.takeByte() catch break;
-                }
-
-                return bytes_read;
-            }
-        },
-        .freebsd => struct {
-            pub const kbio = @import("kbio");
-            pub const consio = @import("consio");
-            pub const reboot = @import("reboot");
-
-            pub const LedState = c_int;
-            pub const get_led_state = kbio.KDGETLED;
-            pub const set_led_state = kbio.KDSETLED;
-            pub const numlock_led = kbio.LED_NUM;
-            pub const capslock_led = kbio.LED_CAP;
-            pub const vt_activate = consio.VT_ACTIVATE;
-            pub const vt_waitactive = consio.VT_WAITACTIVE;
-
-            const FREEBSD_UID_MIN = 1000;
-            const FREEBSD_UID_MAX = 32000;
-
-            pub fn setUserContextImpl(username: [*:0]const u8, entry: UsernameEntry) !void {
-                // FreeBSD has initgroups() in unistd
-                const status = unistd.initgroups(username, @intCast(entry.gid));
-                if (status != 0) return error.GroupInitializationFailed;
-
-                // FreeBSD sets the GID and UID with setusercontext()
-                const result = pwd.setusercontext(null, entry.passwd_struct, @intCast(entry.uid), pwd.LOGIN_SETALL);
-                if (result != 0) return error.SetUserUidFailed;
-            }
-
-            pub fn getActiveTtyImpl(_: std.mem.Allocator, _: std.Io, _: bool) !u8 {
-                return error.FeatureUnimplemented;
-            }
-
-            pub fn getUserIdRange(_: std.mem.Allocator, _: std.Io, _: []const u8) !UidRange {
-                return .{
-                    // Hardcoded default values chosen from
-                    // /usr/src/usr.sbin/pw/pw_conf.c
-                    .uid_min = FREEBSD_UID_MIN,
-                    .uid_max = FREEBSD_UID_MAX,
-                };
-            }
-
-            pub fn shutdownSystemImpl() !void {
-                if (isError(unistd.reboot(reboot.RB_POWEROFF))) {
-                    return error.CouldntShutdown;
-                }
-            }
-
-            pub fn rebootSystemImpl() !void {
-                if (isError(unistd.reboot(reboot.RB_AUTOBOOT))) {
-                    return error.CouldntReboot;
-                }
-            }
-        },
-        else => @compileError("Unsupported target: " ++ builtin.os.tag),
-    };
-}
-
-const platform_struct = PlatformStruct();
-
+/// FreeBSD libc returns -1 on failure and sets errno, so a plain sign check is
+/// all that is ever needed here.
 pub fn isError(result: anytype) bool {
-    if (@typeInfo(@TypeOf(result)).int.signedness == .signed) {
-        return result < 0;
-    }
-
-    if (@typeInfo(@TypeOf(result)).int.signedness == .unsigned) {
-        return switch (builtin.os.tag) {
-            .linux => std.os.linux.errno(result) != .SUCCESS,
-            else => @compileError("interop.isError() not implemented for current target!"),
-        };
-    }
-
-    unreachable;
+    comptime std.debug.assert(@typeInfo(@TypeOf(result)).int.signedness == .signed);
+    return result < 0;
 }
 
+/// FreeBSD's vt(4) console is UTF-8 capable.
 pub fn supportsUnicode() bool {
-    return builtin.os.tag == .linux or builtin.os.tag == .freebsd;
+    return true;
 }
 
 pub fn timeAsString(io: std.Io, buf: [:0]u8, format: [:0]const u8) []u8 {
@@ -316,15 +67,43 @@ pub fn getTimeOfDay() !TimeOfDay {
     };
 }
 
-pub fn getActiveTty(allocator: std.mem.Allocator, io: std.Io, use_kmscon_vt: bool) !u8 {
-    return platform_struct.getActiveTtyImpl(allocator, io, use_kmscon_vt);
+/// Returns the number of the virtual terminal this process is attached to.
+/// FreeBSD numbers virtual terminals starting at 1, while the device nodes
+/// backing them start at 0: VT 1 is /dev/ttyv0, VT 2 is /dev/ttyv1, and so on.
+/// See `ttyDeviceName()` for the mapping.
+pub fn getActiveTty() !u8 {
+    // VT_GETINDEX reports the index of the terminal behind the file
+    // descriptor, which is what we want: the one getty handed us, not
+    // whichever one happens to be in the foreground at this instant. Console
+    // drivers that don't implement it only offer VT_GETACTIVE.
+    const request = comptime if (@hasDecl(consio, "VT_GETINDEX")) consio.VT_GETINDEX else consio.VT_GETACTIVE;
+
+    var vt: c_int = 0;
+
+    const status = std.c.ioctl(std.posix.STDIN_FILENO, request, &vt);
+    if (status != 0) return error.FailedToGetActiveTty;
+    if (vt < 1 or vt > std.math.maxInt(u8)) return error.NoTtyFound;
+
+    return @intCast(vt);
+}
+
+/// Writes the device name of the virtual terminal `tty` (e.g. "ttyv1" for VT
+/// 2) into `buf` and returns it. FreeBSD names these devices with a single
+/// hexadecimal digit, so VT 11 is /dev/ttyva.
+pub fn ttyDeviceName(buf: []u8, tty: u8) ![]u8 {
+    return std.fmt.bufPrint(buf, "ttyv{x}", .{tty -| 1});
+}
+
+/// Same as `ttyDeviceName()`, but NUL-terminated for passing to C.
+pub fn ttyDeviceNameZ(buf: []u8, tty: u8) ![:0]u8 {
+    return std.fmt.bufPrintZ(buf, "ttyv{x}", .{tty -| 1});
 }
 
 pub fn switchTty(tty: u8) !void {
-    var status = std.c.ioctl(std.posix.STDIN_FILENO, platform_struct.vt_activate, tty);
+    var status = std.c.ioctl(std.posix.STDIN_FILENO, consio.VT_ACTIVATE, tty);
     if (status != 0) return error.FailedToActivateTty;
 
-    status = std.c.ioctl(std.posix.STDIN_FILENO, platform_struct.vt_waitactive, tty);
+    status = std.c.ioctl(std.posix.STDIN_FILENO, consio.VT_WAITACTIVE, tty);
     if (status != 0) return error.FailedToWaitForActiveTty;
 }
 
@@ -332,24 +111,24 @@ pub fn getLockState() !struct {
     numlock: bool,
     capslock: bool,
 } {
-    var led: platform_struct.LedState = undefined;
-    const status = std.c.ioctl(std.posix.STDIN_FILENO, platform_struct.get_led_state, &led);
+    var led: LedState = undefined;
+    const status = std.c.ioctl(std.posix.STDIN_FILENO, kbio.KDGETLED, &led);
     if (status != 0) return error.FailedToGetLockState;
 
     return .{
-        .numlock = (led & platform_struct.numlock_led) != 0,
-        .capslock = (led & platform_struct.capslock_led) != 0,
+        .numlock = (led & kbio.LED_NUM) != 0,
+        .capslock = (led & kbio.LED_CAP) != 0,
     };
 }
 
 pub fn setNumlock(val: bool) !void {
-    var led: platform_struct.LedState = undefined;
-    var status = std.c.ioctl(std.posix.STDIN_FILENO, platform_struct.get_led_state, &led);
+    var led: LedState = undefined;
+    var status = std.c.ioctl(std.posix.STDIN_FILENO, kbio.KDGETLED, &led);
     if (status != 0) return error.FailedToGetNumlock;
 
-    const numlock = (led & platform_struct.numlock_led) != 0;
+    const numlock = (led & kbio.LED_NUM) != 0;
     if (numlock != val) {
-        status = std.c.ioctl(std.posix.STDIN_FILENO, platform_struct.set_led_state, led ^ platform_struct.numlock_led);
+        status = std.c.ioctl(std.posix.STDIN_FILENO, kbio.KDSETLED, led ^ kbio.LED_NUM);
         if (status != 0) return error.FailedToSetNumlock;
     }
 }
@@ -358,7 +137,13 @@ pub fn setUserContext(allocator: std.mem.Allocator, entry: UsernameEntry) !void 
     const username_z = try allocator.dupeZ(u8, entry.username.?);
     defer allocator.free(username_z);
 
-    return platform_struct.setUserContextImpl(username_z.ptr, entry);
+    // FreeBSD has initgroups() in unistd
+    const status = unistd.initgroups(username_z.ptr, @intCast(entry.gid));
+    if (status != 0) return error.GroupInitializationFailed;
+
+    // FreeBSD sets the GID and UID with setusercontext()
+    const result = pwd.setusercontext(null, entry.passwd_struct, @intCast(entry.uid), pwd.LOGIN_SETALL);
+    if (result != 0) return error.SetUserUidFailed;
 }
 
 pub fn setUserShell(entry: *UsernameEntry) void {
@@ -418,16 +203,20 @@ pub fn closePasswordDatabase() void {
     pwd.endpwent();
 }
 
-// This is very bad parsing, but we only need to get 2 values... and the format
-// of the file doesn't seem to be standard? So this should be fine...
-pub fn getUserIdRange(allocator: std.mem.Allocator, io: std.Io, file_path: []const u8) !UidRange {
-    return platform_struct.getUserIdRange(allocator, io, file_path);
+/// FreeBSD has no /etc/login.defs to read a UID range from, so the bounds are
+/// baked into the binary at build time. See `UidRange`.
+pub fn getUserIdRange() UidRange {
+    return .{};
 }
 
 pub fn shutdownSystem() !void {
-    try platform_struct.shutdownSystemImpl();
+    if (isError(unistd.reboot(reboot.RB_POWEROFF))) {
+        return error.CouldntShutdown;
+    }
 }
 
 pub fn rebootSystem() !void {
-    try platform_struct.rebootSystemImpl();
+    if (isError(unistd.reboot(reboot.RB_AUTOBOOT))) {
+        return error.CouldntReboot;
+    }
 }

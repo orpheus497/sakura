@@ -9,4 +9,4 @@ _Replace this with a reference to (an) existing issue(s), or N/A if there is non
 ## Pre-requisites
 
 - [ ] I have tested & confirmed the changes work locally
-- [ ] I have read and fully adhere to the rules set in the contributing guidelines found in `CONTRIBUTING.md`
+- [ ] I have tested the changes on FreeBSD

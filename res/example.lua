@@ -1,8 +1,8 @@
 -- [[
--- This is an example of using LuaJIT to create a custom animation in Ly, in this case
+-- This is an example of using LuaJIT to create a custom animation in Sakura, in this case
 -- bouncing squares that change colors.
 --
--- You are given the following `ly` table:
+-- You are given the following `sakura` table:
 -- {
 --	height: number -- The height of the terminal
 --	width: number -- The width of the terminal
@@ -69,51 +69,51 @@ for i = 1, SQUARE_COUNT do
     if math.random(1, 2) == 2 then vx = -vx end
     if math.random(1, 2) == 2 then vy = -vy end
     squares[#squares + 1] = {
-        x = math.random(1, ly.width - SQUARE_WIDTH),
-        y = math.random(1, ly.height - SQUARE_HEIGHT),
+        x = math.random(1, sakura.width - SQUARE_WIDTH),
+        y = math.random(1, sakura.height - SQUARE_HEIGHT),
         vx = vx,
         vy = vy,
         color = math.random(0xFFFFFF)
     }
 end
 
-local timer = ly.clock()
-local perf = ly.clock()
+local timer = sakura.clock()
+local perf = sakura.clock()
 
 function draw()
     -- Rather than progressing the animation by frame, do it based on
-    -- seconds, via ly.clock(). In this timeframe, you can update the animation
+    -- seconds, via sakura.clock(). In this timeframe, you can update the animation
     -- state.
     -- DO NOT DRAW CELLS IN THIS TIMEFRAME. You will get flickering.
 
     -- if this check passes, we can update the animation
-    if timer + FPS() < ly.clock() then
+    if timer + FPS() < sakura.clock() then
         for i, v in ipairs(squares) do
             v.x = v.x + v.vx
             v.y = v.y + v.vy
             if v.x == 0 then
                 v.vx = 1; v.color = math.random(0xFFFFFF)
             end
-            if v.x + SQUARE_WIDTH >= ly.width - 1 then
+            if v.x + SQUARE_WIDTH >= sakura.width - 1 then
                 v.vx = -1; v.color = math.random(0xFFFFFF)
             end
             if v.y == 0 then
                 v.vy = 1; v.color = math.random(0xFFFFFF)
             end
-            if v.y + SQUARE_HEIGHT >= ly.height - 1 then
+            if v.y + SQUARE_HEIGHT >= sakura.height - 1 then
                 v.vy = -1; v.color = math.random(0xFFFFFF)
             end
         end
-        timer = ly.clock()
+        timer = sakura.clock()
     end
 
 
     for i, v in ipairs(squares) do
-        ly.putRect(string.byte(' '), 0, v.color, v.x, v.y, SQUARE_WIDTH, SQUARE_HEIGHT)
+        sakura.putRect(string.byte(' '), 0, v.color, v.x, v.y, SQUARE_WIDTH, SQUARE_HEIGHT)
     end
 
-    local new_perf = ly.clock()
+    local new_perf = sakura.clock()
     local str = "FT: " .. ((new_perf - perf) / 1000) .. "ms"
-    ly.putLabel(str, 0x00FFFFFF, 0, (ly.width / 2) - (string.len(str) / 2), ly.height - 1)
+    sakura.putLabel(str, 0x00FFFFFF, 0, (sakura.width / 2) - (string.len(str) / 2), sakura.height - 1)
     perf = new_perf
 end

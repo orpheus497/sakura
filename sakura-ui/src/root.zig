@@ -1,4 +1,4 @@
-pub const ly_core = @import("ly-core");
+pub const sakura_core = @import("sakura-core");
 
 pub const Cell = @import("Cell.zig");
 pub const keyboard = @import("keyboard.zig");

@@ -5,23 +5,23 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const enable_x11_support = b.option(bool, "enable_x11_support", "Enable X11 support") orelse true;
-    const mod = b.addModule("ly-ui", .{
+    const mod = b.addModule("sakura-ui", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const fallback_uid_min = b.option(std.posix.uid_t, "fallback_uid_min", "Set the fallback minimum UID (default is 1000). This value gets embedded into the binary");
-    const fallback_uid_max = b.option(std.posix.uid_t, "fallback_uid_max", "Set the fallback maximum UID (default is 60000). This value gets embedded into the binary");
+    const uid_min = b.option(std.posix.uid_t, "uid_min", "Set the minimum UID of listed users (default is 1000). This value gets embedded into the binary");
+    const uid_max = b.option(std.posix.uid_t, "uid_max", "Set the maximum UID of listed users (default is 32000). This value gets embedded into the binary");
 
-    const ly_core = b.dependency("ly_core", .{
+    const sakura_core = b.dependency("sakura_core", .{
         .target = target,
         .optimize = optimize,
         .enable_x11_support = enable_x11_support,
-        .fallback_uid_min = fallback_uid_min,
-        .fallback_uid_max = fallback_uid_max,
+        .uid_min = uid_min,
+        .uid_max = uid_max,
     });
-    mod.addImport("ly-core", ly_core.module("ly-core"));
+    mod.addImport("sakura-core", sakura_core.module("sakura-core"));
 
     const termbox_dep = b.dependency("termbox2", .{
         .target = target,
@@ -46,10 +46,9 @@ pub fn build(b: *std.Build) void {
     // __attribute__(__error__()) to be called. Below
     // is the workaround.
     termbox2.defineCMacro("_FORTIFY_SOURCE", "0");
-    // TODO 0.16.0: Needed for now
-    if (target.result.os.tag == .freebsd) {
-        termbox2.defineCMacro("__BSD_VISIBLE", "1");
-    }
+    // Required on FreeBSD so that <sys/*.h> exposes the BSD-only declarations
+    // termbox2 relies on.
+    termbox2.defineCMacro("__BSD_VISIBLE", "1");
     mod.addImport("termbox2", termbox2.mod);
 
     const mod_tests = b.addTest(.{

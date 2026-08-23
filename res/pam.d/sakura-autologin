@@ -1,7 +1,7 @@
 #%PAM-1.0
 
 # OpenPAM (used in FreeBSD) doesn't support prepending "-" for ignoring missing
-# modules.
+# modules, so every module referenced here must exist.
 auth       required     pam_permit.so
 account    include      login
 password   include      login

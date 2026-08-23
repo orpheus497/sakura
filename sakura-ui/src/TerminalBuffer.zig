@@ -2,10 +2,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Random = std.Random;
 
-const ly_core = @import("ly-core");
-const interop = ly_core.interop;
-const LogFile = ly_core.LogFile;
-const SharedError = ly_core.SharedError;
+const sakura_core = @import("sakura-core");
+const interop = sakura_core.interop;
+const LogFile = sakura_core.LogFile;
+const SharedError = sakura_core.SharedError;
 pub const termbox = @import("termbox2");
 
 const Cell = @import("Cell.zig");
@@ -547,7 +547,7 @@ pub fn drawCharMultiple(
 }
 
 // Every codepoint is assumed to have a width of 1.
-// Since Ly is normally running in a TTY, this should be fine.
+// Since Sakura is normally running in a TTY, this should be fine.
 pub fn strWidth(str: []const u8) usize {
     const utf8view = std.unicode.Utf8View.init(str) catch return str.len;
     var utf8 = utf8view.iterator();

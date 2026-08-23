@@ -1,16 +1,14 @@
 const std = @import("std");
-const ly_ui = @import("ly-ui");
-const LogFile = ly_ui.ly_core.LogFile;
-const Widget = ly_ui.Widget;
-const TerminalBuffer = ly_ui.TerminalBuffer;
-const Cell = ly_ui.Cell;
+const sakura_ui = @import("sakura-ui");
+const LogFile = sakura_ui.sakura_core.LogFile;
+const Widget = sakura_ui.Widget;
+const TerminalBuffer = sakura_ui.TerminalBuffer;
+const Cell = sakura_ui.Cell;
 const Allocator = std.mem.Allocator;
 const InfoLine = @import("../components/InfoLine.zig");
 const Lang = @import("../config/Lang.zig");
 
 const zlua = @import("zlua");
-
-const ly_lua = @embedFile("ly.lua");
 
 const Lua = @This();
 
@@ -84,16 +82,16 @@ pub fn init(
         };
         defer alloc.free(zf);
 
-        // create the ly table
+        // create the sakura table
         self.lua.newTable();
-        self.lua.setGlobal("ly");
+        self.lua.setGlobal("sakura");
 
-        // create ly.width and ly.height from TerminalBuffer width/height
+        // create sakura.width and sakura.height from TerminalBuffer width/height
         self.propagateTerminalBounds();
 
-        _ = self.lua.getGlobal("ly");
+        _ = self.lua.getGlobal("sakura");
         _ = self.lua.pushString("clock");
-        self.lua.pushFunction(luaLyClock);
+        self.lua.pushFunction(luaSakuraClock);
         self.lua.setTable(-3);
         _ = self.lua.pushString("putCell");
         self.lua.pushFunction(luaPutCell);
@@ -104,7 +102,7 @@ pub fn init(
         _ = self.lua.pushString("putRect");
         self.lua.pushFunction(luaPutRect);
         self.lua.setTable(-3);
-        self.lua.setGlobal("ly");
+        self.lua.setGlobal("sakura");
 
         self.lua.doFile(zf) catch {
             const errorStr = self.lua.toString(-1) catch unreachable;
@@ -121,7 +119,7 @@ pub fn init(
 fn draw(self: *Lua) void {
     self.propagateTerminalBounds();
     if (self.lua_error) {
-        // Ly's Red Screen of Omega-Death:tm:
+        // Sakura's Red Screen of Omega-Death:tm:
         const RED: u32 = if (self.full_color) TerminalBuffer.Color.TRUE_RED else TerminalBuffer.Color.ECOL_RED;
         const cell = Cell.init(0x2588, RED, RED);
         for (0..self.terminal_buffer.height) |y|
@@ -188,17 +186,17 @@ fn propagateTerminalBounds(self: *Lua) void {
         return;
     self.width = self.terminal_buffer.width;
     self.height = self.terminal_buffer.height;
-    _ = self.lua.getGlobal("ly");
+    _ = self.lua.getGlobal("sakura");
     _ = self.lua.pushString("width");
     self.lua.pushInteger(@intCast(self.terminal_buffer.width));
     self.lua.setTable(-3);
     _ = self.lua.pushString("height");
     self.lua.pushInteger(@intCast(self.terminal_buffer.height));
     self.lua.setTable(-3);
-    self.lua.setGlobal("ly");
+    self.lua.setGlobal("sakura");
 }
 
-fn luaLyClock(state: ?*zlua.LuaState) callconv(.c) c_int {
+fn luaSakuraClock(state: ?*zlua.LuaState) callconv(.c) c_int {
     var threaded = std.Io.Threaded.init_single_threaded;
     const lua: *zlua.Lua = @ptrCast(@alignCast(state orelse unreachable));
     lua.pushInteger(std.Io.Timestamp.now(threaded.io(), .real).toMicroseconds());
@@ -207,7 +205,7 @@ fn luaLyClock(state: ?*zlua.LuaState) callconv(.c) c_int {
 
 fn luaPutCell(state: ?*zlua.LuaState) callconv(.c) c_int {
     const lua: *zlua.Lua = @ptrCast(@alignCast(state orelse unreachable));
-    const MSG = "ly.putCell: cannot convert %s-typed ";
+    const MSG = "sakura.putCell: cannot convert %s-typed ";
     const byte = lua.toNumeric(u32, 1) catch {
         const t = lua.typeName(lua.typeOf(1));
         lua.raiseErrorStr(MSG ++ "byte to u32", .{t.ptr});
@@ -238,7 +236,7 @@ fn luaPutCell(state: ?*zlua.LuaState) callconv(.c) c_int {
 
 fn luaPutRect(state: ?*zlua.LuaState) callconv(.c) c_int {
     const lua: *zlua.Lua = @ptrCast(@alignCast(state orelse unreachable));
-    const MSG = "ly.putRect: cannot convert %s-typed ";
+    const MSG = "sakura.putRect: cannot convert %s-typed ";
     const byte = lua.toNumeric(u32, 1) catch {
         const t = lua.typeName(lua.typeOf(1));
         lua.raiseErrorStr(MSG ++ "byte to u32", .{t.ptr});
@@ -278,7 +276,7 @@ fn luaPutRect(state: ?*zlua.LuaState) callconv(.c) c_int {
 
 fn luaPutLabel(state: ?*zlua.LuaState) callconv(.c) c_int {
     const lua: *zlua.Lua = @ptrCast(@alignCast(state orelse unreachable));
-    const MSG = "ly.putLabel: cannot convert %s-typed ";
+    const MSG = "sakura.putLabel: cannot convert %s-typed ";
     const str = lua.toString(1) catch {
         const t = lua.typeName(lua.typeOf(2));
         lua.raiseErrorStr(MSG ++ "str to string", .{t.ptr});

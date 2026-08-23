@@ -1,11 +1,11 @@
 .{
-    .name = .ly_ui,
-    .version = "1.1.0",
-    .fingerprint = 0x8d11bf85a74ec803,
+    .name = .sakura_ui,
+    .version = "1.0.0",
+    .fingerprint = 0xe076d1fda74ec803,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        .ly_core = .{
-            .path = "../ly-core",
+        .sakura_core = .{
+            .path = "../sakura-core",
         },
         .termbox2 = .{
             .url = "git+https://github.com/AnErrupTion/termbox2?ref=master#c7f241e8888ce243e1748b05c26a42fcfaaad936",

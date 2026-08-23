@@ -3,8 +3,8 @@ const BigLabel = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const ly_core = @import("ly-core");
-const interop = ly_core.interop;
+const sakura_core = @import("sakura-core");
+const interop = sakura_core.interop;
 
 const en = @import("bigLabelLocales/en.zig");
 const fa = @import("bigLabelLocales/fa.zig");
@@ -16,7 +16,7 @@ const Widget = @import("../Widget.zig");
 pub const CHAR_WIDTH = 5;
 pub const CHAR_HEIGHT = 5;
 pub const CHAR_SIZE = CHAR_WIDTH * CHAR_HEIGHT;
-pub const X: u32 = if (ly_core.interop.supportsUnicode()) 0x2593 else '#';
+pub const X: u32 = if (sakura_core.interop.supportsUnicode()) 0x2593 else '#';
 pub const O: u32 = 0;
 
 // zig fmt: off

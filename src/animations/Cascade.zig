@@ -1,10 +1,10 @@
 const std = @import("std");
 const math = std.math;
 
-const ly_ui = @import("ly-ui");
-const Cell = ly_ui.Cell;
-const TerminalBuffer = ly_ui.TerminalBuffer;
-const Widget = ly_ui.Widget;
+const sakura_ui = @import("sakura-ui");
+const Cell = sakura_ui.Cell;
+const TerminalBuffer = sakura_ui.TerminalBuffer;
+const Widget = sakura_ui.Widget;
 
 const Cascade = @This();
 

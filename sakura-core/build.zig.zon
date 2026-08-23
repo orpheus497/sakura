@@ -1,7 +1,7 @@
 .{
-    .name = .ly_core,
-    .version = "1.1.0",
-    .fingerprint = 0xddda7afda795472,
+    .name = .sakura_core,
+    .version = "1.0.0",
+    .fingerprint = 0x40317569da795472,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .zigini = .{

@@ -1,13 +1,13 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const ly_ui = @import("ly-ui");
-const Cell = ly_ui.Cell;
-const TerminalBuffer = ly_ui.TerminalBuffer;
-const Widget = ly_ui.Widget;
+const sakura_ui = @import("sakura-ui");
+const Cell = sakura_ui.Cell;
+const TerminalBuffer = sakura_ui.TerminalBuffer;
+const Widget = sakura_ui.Widget;
 
-const ly_core = ly_ui.ly_core;
-const interop = ly_core.interop;
+const sakura_core = sakura_ui.sakura_core;
+const interop = sakura_core.interop;
 const TimeOfDay = interop.TimeOfDay;
 
 const Doom = @This();

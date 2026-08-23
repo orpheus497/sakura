@@ -5,17 +5,18 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const enable_x11_support = b.option(bool, "enable_x11_support", "Enable X11 support") orelse true;
-    const mod = b.addModule("ly-core", .{
+    const mod = b.addModule("sakura-core", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const fallback_uid_min = b.option(std.posix.uid_t, "fallback_uid_min", "Set the fallback minimum UID (default is 1000). This value gets embedded into the binary").?;
-    const fallback_uid_max = b.option(std.posix.uid_t, "fallback_uid_max", "Set the fallback maximum UID (default is 60000). This value gets embedded into the binary").?;
+    const uid_min = b.option(std.posix.uid_t, "uid_min", "Set the minimum UID of listed users (default is 1000). This value gets embedded into the binary") orelse 1000;
+    const uid_max = b.option(std.posix.uid_t, "uid_max", "Set the maximum UID of listed users (default is 32000). This value gets embedded into the binary") orelse 32000;
     const build_options = b.addOptions();
-    build_options.addOption(std.posix.uid_t, "fallback_uid_min", fallback_uid_min);
-    build_options.addOption(std.posix.uid_t, "fallback_uid_max", fallback_uid_max);
+    build_options.addOption(std.posix.uid_t, "uid_min", uid_min);
+    build_options.addOption(std.posix.uid_t, "uid_max", uid_max);
+    build_options.addOption(bool, "enable_x11_support", enable_x11_support);
     mod.addOptions("build_options", build_options);
 
     const zigini = b.dependency("zigini", .{ .target = target, .optimize = optimize });
@@ -30,30 +31,27 @@ pub fn build(b: *std.Build) void {
     if (enable_x11_support) {
         addCImport(b, mod, translate_c, target, optimize, "xcb", "#include <xcb/xcb.h>");
     }
-    if (target.result.os.tag == .freebsd) {
-        addCImport(b, mod, translate_c, target, optimize, "pwd",
-            \\#include <pwd.h>
-            \\#include <sys/types.h>
-            \\#include <login_cap.h>
-        );
-    } else {
-        addCImport(b, mod, translate_c, target, optimize, "pwd", "#include <pwd.h>");
-    }
+    addCImport(b, mod, translate_c, target, optimize, "pwd",
+        \\#include <sys/types.h>
+        \\#include <pwd.h>
+        \\#include <login_cap.h>
+    );
     addCImport(b, mod, translate_c, target, optimize, "stdlib", "#include <stdlib.h>");
     addCImport(b, mod, translate_c, target, optimize, "unistd", "#include <unistd.h>");
-    addCImport(b, mod, translate_c, target, optimize, "grp", "#include <grp.h>");
     addCImport(b, mod, translate_c, target, optimize, "system_time", "#include <sys/time.h>");
     addCImport(b, mod, translate_c, target, optimize, "time", "#include <time.h>");
 
-    if (target.result.os.tag == .linux) {
-        addCImport(b, mod, translate_c, target, optimize, "kd", "#include <sys/kd.h>");
-        addCImport(b, mod, translate_c, target, optimize, "vt", "#include <sys/vt.h>");
-    } else if (target.result.os.tag == .freebsd) {
-        addCImport(b, mod, translate_c, target, optimize, "kbio", "#include <sys/kbio.h>");
-        addCImport(b, mod, translate_c, target, optimize, "consio", "#include <sys/consio.h>");
-        addCImport(b, mod, translate_c, target, optimize, "sysctl", "#include <sys/sysctl.h>");
-        addCImport(b, mod, translate_c, target, optimize, "reboot", "#include <sys/reboot.h>");
-    }
+    // FreeBSD console & power management interfaces
+    addCImport(b, mod, translate_c, target, optimize, "kbio", "#include <sys/kbio.h>");
+    addCImport(b, mod, translate_c, target, optimize, "consio", "#include <sys/consio.h>");
+    addCImport(b, mod, translate_c, target, optimize, "sysctl",
+        \\#include <sys/types.h>
+        \\#include <sys/sysctl.h>
+    );
+    addCImport(b, mod, translate_c, target, optimize, "reboot",
+        \\#include <sys/types.h>
+        \\#include <sys/reboot.h>
+    );
 
     const mod_tests = b.addTest(.{
         .root_module = mod,
@@ -73,10 +71,10 @@ fn addCImport(
     comptime name: []const u8,
     comptime bytes: []const u8,
 ) void {
-    const pam: Translator = .init(translate_c, .{
+    const translator: Translator = .init(translate_c, .{
         .c_source_file = b.addWriteFiles().add(name ++ ".h", bytes),
         .target = target,
         .optimize = optimize,
     });
-    mod.addImport(name, pam.mod);
+    mod.addImport(name, translator.mod);
 }

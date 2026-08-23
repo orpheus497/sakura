@@ -18,7 +18,7 @@ pub fn init(io: std.Io, path: ?[]const u8, buffer: []u8) !LogFile {
     if (path) |p| {
         log_file.could_open_log_file = try openLogFile(io, p, &log_file);
     } else {
-        std.posix.system.openlog("ly", 0, 0);
+        std.posix.system.openlog("sakura", 0, 0);
         log_file.could_open_log_file = true;
     }
 
@@ -29,7 +29,7 @@ pub fn reinit(self: *LogFile, io: std.Io) !void {
     if (self.maybe_path) |path| {
         self.could_open_log_file = try openLogFile(io, path, self);
     } else {
-        std.posix.system.openlog("ly", 0, 0);
+        std.posix.system.openlog("sakura", 0, 0);
         self.could_open_log_file = true;
     }
 }
@@ -72,7 +72,7 @@ pub fn err(self: *LogFile, io: std.Io, category: []const u8, comptime message: [
     } else {
         var buffer: [1024]u8 = undefined;
         const slice = try std.fmt.bufPrint(&buffer, message, args);
-        const msg = try std.fmt.bufPrintZ(buffer[slice.len..], "[info/{s}] {s}", .{ category, slice });
+        const msg = try std.fmt.bufPrintZ(buffer[slice.len..], "[err/{s}] {s}", .{ category, slice });
 
         std.posix.system.syslog(std.posix.LOG.ERR, msg.ptr);
     }

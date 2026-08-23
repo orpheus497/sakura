@@ -1,273 +1,217 @@
-# The Ly display manager
+# The Sakura display manager
 
-![Ly screenshot](.github/screenshot.png "Ly screenshot")
+![Sakura screenshot](.github/screenshot.png "Sakura screenshot")
 
-_Note: the above animation can be found [here](https://codeberg.org/fairyglade/ly-community/src/branch/main/animations/dur/blackhole-smooth-240x67.dur)!_
+_Note: the animation shown above is a `.dur` file; see the `dur_file` animation
+in the configuration._
 
-Ly is a lightweight TUI (ncurses-like) display manager for Linux and BSD, designed with portability in mind and doesn't require systemd to run.
+Sakura is a lightweight TUI (ncurses-like) display manager built exclusively
+for FreeBSD. It runs on a virtual terminal, talks to OpenPAM directly, and does
+not depend on a graphical toolkit, a session bus, or a login-manager framework.
 
-Join us on Matrix over at [#ly-dm:matrix.org](https://matrix.to/#/#ly-dm:matrix.org)!
-
-> [!NOTE]
-> Development happens on [Codeberg](https://codeberg.org/fairyglade/ly) with a mirror on [GitHub](https://github.com/fairyglade/ly).
+Sakura only targets FreeBSD. The build refuses any other target on purpose: all
+the console, power-management and account handling goes through FreeBSD
+interfaces (`vt(4)`, `kbio(4)`, `consio(4)`, `reboot(2)`, `setusercontext(3)`
+and `sysctl(3)`) rather than through a portability layer.
 
 ## Dependencies
 
 - Compile-time:
-  - zig 0.16.x (you must use a **release version** of zig; check that `zig version` does not have a `-dev*` suffix)
+  - zig 0.16.x (you must use a **release version** of zig; check that
+    `zig version` does not have a `-dev*` suffix)
 
-  - libc
-
-  - pam
+  - libc and OpenPAM (both part of the FreeBSD base system)
 
   - xcb (optional, required by default; needed for X11 support)
 
-- Runtime (with default config):
+- Runtime (with the default configuration):
   - xorg
 
   - xorg-xauth
 
-  - shutdown
+  - `backlight(8)` (part of the base system, used for the brightness keybinds)
 
-  - brightnessctl
-
-### Debian
-
-```
-# apt install build-essential libpam0g-dev libxcb-xkb-dev xauth xserver-xorg brightnessctl
-```
-
-### Fedora
+Everything else Sakura needs — shutdown, reboot, virtual terminal switching and
+the keyboard LEDs — is handled in-process through FreeBSD system calls, so no
+helper binaries are required for those.
 
 ```
-# dnf install kernel-devel pam-devel libxcb-devel zig xorg-x11-xauth xorg-x11-server brightnessctl
+# pkg install zig git libxcb xorg xorg-xauth ca_root_nss
 ```
 
-> [!WARNING]
-> Distributions using SELinux such as Fedora and openSUSE Tumbleweed may encounter issues. If you encounter such issues, such as session launch failures, proceed with the following steps:
->
-> ```
-> # ausearch -m avc -ts recent
-> ```
->
-> If SELinux is denying process context transition, you will see this output:
->
-> ```
-> denied { transition } for pid=XXXX comm="ly" path="/usr/bin/bash"
-> scontext=system_u:system_r:unconfined_service_t:s0
-> tcontext=unconfined_u:unconfined_r:unconfined_t:s0
-> tclass=process permissive=0
-> ```
->
-> Pipe this output into `audit2allow` to generate a security module package. This will persist regardless of changes to filesystem permissions:
->
-> ```
-> # ausearch -m avc -ts recent | audit2allow -M ly-local
-> ```
->
-> ```
-> # semodule -i ly-local.pp
-> ```
->
-> _This fix has been confirmed on Fedora 39 and 44 and openSUSE Tumbleweed. (#494)_
-
-### FreeBSD
+## Building
 
 ```
-# pkg install ca_root_nss libxcb git xorg xauth
-```
-
-## Availability
-
-[![Packaging status](https://repology.org/badge/vertical-allrepos/ly-display-manager.svg?exclude_unsupported=1)](https://repology.org/project/ly-display-manager/versions)
-
-## Custom animations & user scripts
-
-If you want to pimp your Ly installation even further than what the traditional configuration file allows you to, a [community repository](https://codeberg.org/fairyglade/ly-community) exists containing custom animations & scripts, so go check it out!
-
-## Support
-
-Every environment that works on other login managers also should work on Ly.
-
-- Unlike most login managers Ly has an xinitrc and shell entry.
-
-- If you installed your favorite environment and you don't see it, that's because Ly doesn't automatically refresh itself. To fix this you should restart Ly service (depends on your init system) or the easy way is to reboot your system.
-
-- If your environment is still missing then check at `/usr/share/xsessions` or `/usr/share/wayland-sessions` to see if a .desktop file is present.
-
-- If there isn't a .desktop file then create a new one at `/etc/ly/custom-sessions` that launches your favorite environment. These .desktop files can be only seen by Ly and if you want them system-wide you also can create at those directories instead.
-
-- If Xorg sessions don't work then check if your distro compiles Ly with Xorg.
-
-Logs are defined by `/etc/ly/config.ini`:
-
-- The session log is located at `~/.local/state/ly-session.log` by default.
-
-- The system log is located at `/var/log/ly.log` by default.
-
-## Manually building
-
-The procedure for manually building Ly is pretty standard:
-
-```
-$ git clone https://codeberg.org/fairyglade/ly.git
-$ cd ly
+$ git clone <your-clone-url> sakura
+$ cd sakura
 $ zig build
 ```
 
-After building, you can (optionally) test Ly in a terminal emulator, although authentication will **not** work:
+After building, you can (optionally) test Sakura in a terminal emulator,
+although authentication will **not** work:
 
 ```
 $ zig build run
 ```
 
 > [!IMPORTANT]
-> While you can run Ly in a terminal emulator as root, it is **not** recommended. If you want to test Ly, please enable its service (as described below) and reboot your machine.
+> While you can run Sakura in a terminal emulator as root, it is **not**
+> recommended. To properly test Sakura, install it, wire it up in `/etc/ttys`
+> as described below, and reboot.
 
 > [!NOTE]
-> You can, however, test your configuration file changes like that. Note that you must do Ctrl+C in order to exit Ly.
+> You can, however, test configuration file changes that way. Note that you
+> must press Ctrl+C in order to exit Sakura.
 
-The next sections will explain how to use Ly with a variety of init systems. Detailed explanation is only given for systemd, but should be applicable for all.
-
-> [!NOTE]
-> All following sections will assume you are using LightDM for convenience sake.
-
-### systemd
-
-Now, you can install Ly on your system:
+## Installing
 
 ```
-# zig build installexe -Dinit_system=systemd
+# zig build installexe
 ```
 
-> [!NOTE]
-> The `init_system` parameter is optional and defaults to `systemd`.
+This installs:
 
-Note that you also need to disable your current display manager. For example, if you are using LightDM, you can execute the following command:
+| Path | Contents |
+| --- | --- |
+| `/usr/local/bin/sakura` | the display manager |
+| `/usr/local/bin/sakura_wrapper` | the `getty(8)` wrapper (see below) |
+| `/usr/local/etc/sakura/` | configuration, language files, examples |
+| `/usr/local/etc/pam.d/sakura` | the PAM policy used for normal logins |
+| `/usr/local/etc/pam.d/sakura-autologin` | the PAM policy used for autologin |
 
-```
-# systemctl disable lightdm.service
-```
-
-Then, similarly to the previous command, you need to enable the Ly service:
-
-```
-# systemctl enable ly@tty2.service
-```
-
-> [!IMPORTANT]
-> Because Ly runs in a TTY, you **must** disable the TTY service that Ly will run on, otherwise bad things will happen. For example, to disable `getty` spawning on TTY 2, you need to execute the following command:
+The defaults follow the FreeBSD ports layout (`--prefix` is `/usr/local` and
+the configuration lives under `/usr/local/etc`). Both can be overridden:
 
 ```
-# systemctl disable getty@tty2.service
+# zig build installexe -Dprefix_directory=/usr/local -Dconfig_directory=/usr/local/etc
 ```
 
-On non-systemd systems, you can change the TTY Ly will run on by editing the corresponding service file for your platform.
-
-### OpenRC
-
-```
-# zig build installexe -Dinit_system=openrc
-# rc-update del lightdm
-# rc-update add ly
-# rc-update del agetty.tty2
-```
-
-> [!NOTE]
-> On Gentoo, Alpine and potentially others, you also **must** comment out the appropriate line for the TTY in /etc/inittab.
-
-### runit
+If another display manager is currently enabled, disable it first. For example,
+for LightDM:
 
 ```
-# zig build installexe -Dinit_system=runit
-# unlink /var/service/lightdm
-# ln -s /etc/sv/ly /var/service/
-# touch /etc/sv/agetty-tty2/down
-# unlink /var/service/agetty-tty2
-```
-
-### s6
-
-```
-# zig build installexe -Dinit_system=s6
-# s6-rc -d change lightdm
-# s6-service add default ly-srv
-# s6-db-reload
-# s6-rc -u change ly-srv
-```
-
-To disable TTY 2, edit `/etc/s6/config/tty2.conf` and set `SPAWN="no"`.
-
-### dinit
-
-```
-# zig build installexe -Dinit_system=dinit
-# dinitctl disable lightdm
-# dinitctl enable ly
-```
-
-To disable TTY 2, go to `/etc/dinit.d/config/console.conf` and modify `ACTIVE_CONSOLES`.
-
-### sysvinit
-
-```
-# zig build installexe -Dinit_system=sysvinit
-# update-rc.d lightdm disable
-# update-rc.d ly defaults
-```
-
-To disable TTY 2, go to `/etc/inittab` and comment out the line containing `tty2`.
-
-### FreeBSD
-
-```
-# zig build installexe -Dprefix_directory=/usr/local -Dconfig_directory=/usr/local/etc -Dinit_system=freebsd
+# service lightdm stop
 # sysrc lightdm_enable="NO"
 ```
 
-To enable Ly, add the following entry to `/etc/gettytab`:
+## Enabling
+
+FreeBSD starts a `getty(8)` on each virtual terminal listed in `/etc/ttys`.
+Sakura replaces the login program on one of them. Both snippets below are
+installed to `/usr/local/etc/sakura/` as `gettytab.example` and `ttys.example`,
+already filled in with the paths you built with.
+
+First, append the Sakura entry to `/etc/gettytab` (see `gettytab(5)`):
 
 ```
-Ly:\
-	:lo=/usr/local/bin/ly_wrapper:\
+sakura:\
+	:lo=/usr/local/bin/sakura_wrapper:\
 	:al=root:
 ```
 
-Then, modify the command field of the `ttyv1` terminal entry in `/etc/ttys` (TTYs in FreeBSD start at 0):
+`lo` replaces `login(1)` with Sakura's wrapper, and `al` makes `getty` hand the
+terminal over without prompting for a user name first.
+
+> [!NOTE]
+> The wrapper exists because `getty` appends `login -fp root` to the program
+> named by `lo`, which Sakura does not accept. The wrapper drops those
+> arguments and then executes Sakura.
+
+Then point a virtual terminal at that entry in `/etc/ttys` (see `ttys(5)`).
+FreeBSD numbers virtual terminals from 1 but names their device nodes from 0,
+so virtual terminal 2 — Sakura's default — is `/dev/ttyv1`:
 
 ```
-ttyv1 "/usr/libexec/getty Ly" xterm on secure
+ttyv1	"/usr/libexec/getty sakura"	xterm	onifexists	secure
 ```
 
-### Updating
+Finally, make `init(8)` re-read the file:
 
-You can also install Ly without overriding the current configuration file. This is called **updating**. To update, simply run:
+```
+# kill -HUP 1
+```
+
+To run Sakura on a different virtual terminal, build with `-Ddefault_tty=N`
+(which also adjusts the generated examples) and edit the matching `/etc/ttys`
+line instead.
+
+## Updating
+
+You can install Sakura without overriding the current configuration file:
 
 ```
 # zig build installnoconf
 ```
 
-You can, of course, still select the init system of your choice when using this command.
+## Uninstalling
+
+```
+# zig build uninstallexe
+```
+
+`uninstallnoconf` does the same but keeps `/usr/local/etc/sakura`. Neither
+touches `/etc/gettytab` or `/etc/ttys`, so remember to revert those by hand.
 
 ## Configuration
 
-You can find all the configuration in `/etc/ly/config.ini`. The file is fully commented, and includes the default values.
+All configuration lives in `/usr/local/etc/sakura/config.ini`. The file is
+fully commented and includes the default values. A pristine copy is kept next
+to it as `config.ini.example`.
 
-You may also check the validity of your configuration file (i.e. if there are any errors in it) with the following command:
+You can check the validity of your configuration file (i.e. whether there are
+any errors in it) with:
 
 ```
-$ ly --validate-config /etc/ly/config.ini
+$ sakura --validate-config /usr/local/etc/sakura/config.ini
 ```
+
+Logs are defined by that same file:
+
+- The session log is at `~/.local/state/sakura-session.log` by default.
+
+- The system log is at `/var/log/sakura.log` by default. If set to `null`,
+  `syslog(3)` is used instead, under the `sakura` identifier.
 
 ## Controls
 
-Use the Up/Down arrow keys to change the current field, and the Left/Right arrow keys to scroll through the different fields (whether it be the info line, the desktop environment, or the username). The info line is where messages and errors are displayed.
+Use the Up/Down arrow keys to change the current field, and the Left/Right
+arrow keys to scroll through the different values (whether it be the info line,
+the desktop environment, or the username). The info line is where messages and
+errors are displayed.
 
-## A note on .xinitrc
+## Sessions
 
-If your `.xinitrc` file doesn't work, make sure it is executable and includes a shebang. This file is supposed to be a shell script! Quoting from `xinit`'s man page:
+Every environment that works with other login managers should work with Sakura.
 
-> If no specific client program is given on the command line, xinit will look for a file in the user's home directory called .xinitrc to run as a shell script to start up client programs.
+- Unlike most login managers, Sakura has an xinitrc and a shell entry.
+
+- Sakura does not refresh itself, so a newly installed environment only shows
+  up after Sakura restarts (log out, or reboot).
+
+- If your environment is still missing, check `/usr/local/share/xsessions` or
+  `/usr/local/share/wayland-sessions` for a `.desktop` file.
+
+- If there is no `.desktop` file, create one in
+  `/usr/local/etc/sakura/custom-sessions` that launches your environment. Those
+  entries are only visible to Sakura; put them in the directories above instead
+  if you want them system-wide. See the `README` in that directory for the
+  supported keys.
+
+### A note on X11
+
+Handing Xorg the same virtual terminal Sakura runs on can make the console and
+the X server fight over it. If X fails to start or the screen is left in a bad
+state, point the `x_vt` option at a spare virtual terminal.
+
+### A note on .xinitrc
+
+If your `.xinitrc` file doesn't work, make sure it is executable and includes a
+shebang. This file is supposed to be a shell script! Quoting from `xinit`'s man
+page:
+
+> If no specific client program is given on the command line, xinit will look
+> for a file in the user's home directory called .xinitrc to run as a shell
+> script to start up client programs.
 
 A typical shebang for a shell script looks like this:
 
@@ -279,17 +223,26 @@ A typical shebang for a shell script looks like this:
 
 - The numlock and capslock states are printed in the top-right corner.
 
-- Use the F1 and F2 keys to respectively shutdown and reboot.
+- Use the F1 and F2 keys to respectively shut down and reboot. These call
+  `reboot(2)` directly, so no external helper is needed.
 
-- Take a look at your `.xsession` file if X doesn't start, as it can interfere (this file is launched with X to configure the display properly).
+- Battery status is off by default. Set `battery_sysctl = hw.acpi.battery.life`
+  to show it.
 
-## A final note
+- Take a look at your `.xsession` file if X doesn't start, as it can interfere
+  (this file is launched with X to configure the display properly).
 
-The name "Ly" is a tribute to the fairy from the game Rayman. Ly was tested by oxodao, who is some seriously awesome dude.
+- `/usr/local/etc/sakura/startup.sh` runs before Sakura takes control of the
+  terminal, which is a good place for `vidcontrol(1)` tweaks such as loading a
+  larger console font.
 
-Also, Ly wouldn't be there today without [ashametrine](https://github.com/ashametrine), who has done significant contributions to the project for the Zig rewrite, which lead to the release of Ly v1.0.0. Massive thanks, and sorry for not crediting you enough beforehand!
+## Credits
 
-### Donate
+Sakura is a FreeBSD-only fork of [Ly](https://codeberg.org/fairyglade/ly), the
+TUI display manager by the Fairy Glade. All the groundwork — the TUI, the
+animations, the session handling and the Zig rewrite — comes from Ly and its
+contributors. Sakura narrows that work down to a single platform.
 
-If you like Ly and wish to support my work further, feel free to donate via my
-[Liberapay link](https://liberapay.com/ShiningLea)!
+## License
+
+Sakura, like Ly, is released under the WTFPL. See `license.md`.
