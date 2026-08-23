@@ -423,9 +423,17 @@ var color_mode: ColorMode = .eight;
 /// bright variant selected by the bold bit. Anything Sakura draws as an image
 /// has to be chosen from these, because sys/terminal.h stores the colour in
 /// three bits and folds everything else down to them.
+///
+/// These are FreeBSD's own console colours, not the usual VGA ones. The kernel
+/// keeps them as percentages in sys/dev/vt/colors/vt_termcolors.c and scales
+/// them by 255/100, which makes its blues noticeably softer than VGA's -- index
+/// 12 is a pale periwinkle rather than a hard blue. Matching against the wrong
+/// table picks visibly wrong colours, so these must stay in step with the
+/// kernel. They can be overridden per-colour with the kern.vt.color.N.rgb
+/// loader tunables; Sakura assumes the defaults.
 pub const vt_palette = [16]u32{
-    0x000000, 0xAA0000, 0x00AA00, 0xAA5500, 0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA,
-    0x555555, 0xFF5555, 0x55FF55, 0xFFFF55, 0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF,
+    0x000000, 0x7F0000, 0x007F00, 0xC4A000, 0x3366A3, 0x7F007F, 0x007F7F, 0xBFBFBF,
+    0x2D3335, 0xFF0000, 0x00FF00, 0xFFFF00, 0x729ECE, 0xFF00FF, 0x00FFFF, 0xFFFFFF,
 };
 
 /// Encodes a console palette index the way termbox2 expects for the current

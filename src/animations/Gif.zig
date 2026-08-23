@@ -413,8 +413,13 @@ fn chooseCell(self: *const Gif, quad: [4]u32) Choice {
             }
         }
 
-        const fg = if (on_count > 0) self.nearestPalette(meanColor(on[0..on_count])) else 0;
-        const bg = if (off_count > 0) self.nearestPalette(meanColor(off[0..off_count])) else 0;
+        var fg = if (on_count > 0) self.nearestPalette(meanColor(on[0..on_count])) else 0;
+        var bg = if (off_count > 0) self.nearestPalette(meanColor(off[0..off_count])) else 0;
+        // A full block has no background and a space has no foreground; give
+        // the unused half the same colour so the pair always describes what is
+        // actually on screen.
+        if (on_count == 0) fg = bg;
+        if (off_count == 0) bg = fg;
 
         var err: u64 = 0;
         for (quad, 0..) |c, k| {
@@ -819,27 +824,54 @@ test "chooseCell resolves a single bright quadrant" {
     );
 }
 
-test "stipple is allowed for hues the palette lacks but suppressed for greys" {
+/// How far apart the two colours a choice mixes are; zero for a flat cell.
+fn separationOf(choice: Choice) u32 {
+    if (choice.fg == choice.bg) return 0;
+    return TerminalBuffer.colorDistance(
+        TerminalBuffer.vt_palette[choice.fg],
+        TerminalBuffer.vt_palette[choice.bg],
+    );
+}
+
+test "a colour the palette already has stays flat" {
+    const allocator = std.testing.allocator;
+    var matcher = try testMatcher(allocator, 0.6);
+    defer freeMatcher(&matcher, allocator);
+
+    // Light grey is a console colour, so there is nothing to gain by dithering.
+    const on_palette = TerminalBuffer.vt_palette[7];
+    const choice = matcher.chooseCell(.{ on_palette, on_palette, on_palette, on_palette });
+    try std.testing.expectEqual(@as(u32, 0), separationOf(choice));
+}
+
+test "a hue the palette lacks is dithered rather than flattened" {
+    const allocator = std.testing.allocator;
+    var matcher = try testMatcher(allocator, 0.6);
+    defer freeMatcher(&matcher, allocator);
+
+    // Salmon: the nearest flat colour is a grey, which would drop the hue
+    // entirely, so mixing is worth the stipple.
+    const salmon: u32 = 0xF08080;
+    const choice = matcher.chooseCell(.{ salmon, salmon, salmon, salmon });
+    try std.testing.expect(choice.slot >= quadrants.len);
+    try std.testing.expect(choice.fg != choice.bg);
+}
+
+test "the stipple penalty prefers closer colour pairs on neutral tones" {
     const allocator = std.testing.allocator;
 
-    // A pastel pink has no flat equivalent in the sixteen colours, so a shade
-    // blend should win even with the penalty applied.
-    var tuned = try testMatcher(allocator, 0.6);
-    defer freeMatcher(&tuned, allocator);
-    const pink: u32 = 0xF08080;
-    const chosen = tuned.chooseCell(.{ pink, pink, pink, pink });
-    try std.testing.expect(chosen.slot >= quadrants.len); // a shade glyph
-    try std.testing.expect(chosen.fg != chosen.bg);
+    // A desaturated blue-grey, the sort of tone that can be faked either by
+    // mixing two near neighbours or by mixing two distant colours. The penalty
+    // should steer away from the distant pair, which is what reads as stipple.
+    const neutral: u32 = 0x9FA8B0;
 
-    // A near-neutral grey is close enough to a flat colour that the penalty
-    // should push it to a solid block rather than a dither.
-    const grey: u32 = 0xC4C8C4;
-    const flat = tuned.chooseCell(.{ grey, grey, grey, grey });
-    try std.testing.expect(flat.slot < quadrants.len);
-
-    // With the penalty switched off, that same grey dithers for a closer match.
     var loose = try testMatcher(allocator, 0.0);
     defer freeMatcher(&loose, allocator);
-    const dithered = loose.chooseCell(.{ grey, grey, grey, grey });
-    try std.testing.expect(dithered.slot >= quadrants.len);
+    const unpenalised = loose.chooseCell(.{ neutral, neutral, neutral, neutral });
+
+    var tuned = try testMatcher(allocator, 4.0);
+    defer freeMatcher(&tuned, allocator);
+    const penalised = tuned.chooseCell(.{ neutral, neutral, neutral, neutral });
+
+    try std.testing.expect(separationOf(penalised) <= separationOf(unpenalised));
 }
