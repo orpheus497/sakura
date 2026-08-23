@@ -205,7 +205,7 @@ The relevant options in `config.ini`:
 | `gif_file` | which GIF to show |
 | `gif_scaling` | `fill` (default), `fit`, `stretch` or `none` |
 | `gif_font_aspect` | cell height divided by cell width; see below |
-| `gif_stipple` | how readily two colours are dithered together (default `0.6`) |
+| `gif_stipple` | how readily two colours are dithered together (default `0.2`) |
 
 To use your own wallpaper, drop any GIF87a/GIF89a file — animated or still — in
 place of `/usr/local/etc/sakura/pixel_sakura.gif`, or point `gif_file` somewhere
