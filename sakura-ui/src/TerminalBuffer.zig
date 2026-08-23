@@ -419,6 +419,56 @@ pub fn getCell(x: usize, y: usize) ?Cell {
 const ColorMode = enum { eight, palette_256 };
 var color_mode: ColorMode = .eight;
 
+/// The 16 colours a vt(4) console can actually display: eight hues, each with a
+/// bright variant selected by the bold bit. Anything Sakura draws as an image
+/// has to be chosen from these, because sys/terminal.h stores the colour in
+/// three bits and folds everything else down to them.
+pub const vt_palette = [16]u32{
+    0x000000, 0xAA0000, 0x00AA00, 0xAA5500, 0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA,
+    0x555555, 0xFF5555, 0x55FF55, 0xFFFF55, 0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF,
+};
+
+/// Encodes a console palette index the way termbox2 expects for the current
+/// output mode.
+///
+/// There is no room in a u32 to mark "this is already an index" -- all 24 low
+/// bits are colour and all 8 high bits are termbox styles -- so palette cells
+/// go out through `setPaletteCell` instead of `setCell`, and never meet the
+/// RGB quantiser at all. Indices 0-15 are passed straight through by the
+/// console (subr_terminal.c only folds 256-colour values of 16 and above), so
+/// what is chosen here is exactly what gets displayed.
+fn paletteColor(index: u4) u32 {
+    if (color_mode == .eight) {
+        // TB_OUTPUT_NORMAL numbers its colours from one and takes brightness
+        // as a separate bit.
+        const base: u32 = @as(u32, index & 0x7) + 1;
+        return if (index >= 8) base | Styling.BRIGHT else base;
+    }
+    // Index 0 with no styling would read as "terminal default", so black has to
+    // be asked for explicitly.
+    if (index == 0) return Styling.HI_BLACK;
+    return @as(u32, index);
+}
+
+/// Perceptual-ish RGB distance ("redmean"). Plain Euclidean distance sends the
+/// desaturated blues in pixel art off towards cyan; weighting the channels the
+/// way the eye does keeps them neutral.
+pub fn colorDistance(a: u32, b: u32) u32 {
+    const ar: i32 = @intCast((a >> 16) & 0xFF);
+    const ag: i32 = @intCast((a >> 8) & 0xFF);
+    const ab: i32 = @intCast(a & 0xFF);
+    const br: i32 = @intCast((b >> 16) & 0xFF);
+    const bg: i32 = @intCast((b >> 8) & 0xFF);
+    const bb: i32 = @intCast(b & 0xFF);
+
+    const rmean = (ar + br) >> 1;
+    const dr = ar - br;
+    const dg = ag - bg;
+    const db = ab - bb;
+
+    return @intCast((((512 + rmean) * dr * dr) >> 8) + 4 * dg * dg + (((767 - rmean) * db * db) >> 8));
+}
+
 /// The six levels the xterm 6x6x6 colour cube is built from.
 const cube_levels = [6]u8{ 0, 95, 135, 175, 215, 255 };
 
@@ -494,6 +544,22 @@ pub fn setCell(x: usize, y: usize, cell: Cell) !void {
 pub fn setCellBoundsChecked(self: *TerminalBuffer, x: isize, y: isize, cell: Cell) !void {
     if (0 <= x and x < self.width and 0 <= y and y < self.height) {
         try cell.put(@intCast(x), @intCast(y));
+    }
+}
+
+/// Writes a cell whose colours were already chosen from `vt_palette`, skipping
+/// the RGB quantisation `setCell` applies. Used by the wallpaper, which matches
+/// against the console palette directly.
+pub fn setPaletteCell(self: *TerminalBuffer, x: usize, y: usize, ch: u32, fg: u4, bg: u4) !void {
+    if (x >= self.width or y >= self.height) return;
+    if (termbox.tb_set_cell(
+        @intCast(x),
+        @intCast(y),
+        ch,
+        paletteColor(fg),
+        paletteColor(bg),
+    ) != 0) {
+        return error.TermboxSetCellFailed;
     }
 }
 
@@ -778,6 +844,28 @@ test "index256 maps onto the xterm palette" {
     }
 }
 
+test "paletteColor encodes console indices for each output mode" {
+    const expectEqual = std.testing.expectEqual;
+
+    color_mode = .palette_256;
+    defer color_mode = .eight;
+
+    // Index 0 would read as "terminal default", so it goes out as explicit black.
+    try expectEqual(@as(u32, Styling.HI_BLACK), paletteColor(0));
+    // Everything else is the index itself; the console passes 0-15 through.
+    var i: u4 = 1;
+    while (true) : (i += 1) {
+        try expectEqual(@as(u32, i), paletteColor(i));
+        if (i == 15) break;
+    }
+
+    // The eight-colour mode numbers from one and carries brightness separately.
+    color_mode = .eight;
+    try expectEqual(@as(u32, Color.ECOL_RED), paletteColor(1));
+    try expectEqual(@as(u32, Color.ECOL_WHITE), paletteColor(7));
+    try expectEqual(@as(u32, Color.ECOL_RED | Styling.BRIGHT), paletteColor(9));
+}
+
 test "toTerminalColor keeps styling and passes defaults through" {
     const expectEqual = std.testing.expectEqual;
 
@@ -793,6 +881,13 @@ test "toTerminalColor keeps styling and passes defaults through" {
     const bold_white = toTerminalColor(Styling.BOLD | Color.TRUE_WHITE);
     try expectEqual(@as(u32, Styling.BOLD), bold_white & 0xFF000000);
     try expectEqual(@as(u32, 231), bold_white & 0xFF);
+
+    // Every RGB value must reach the quantiser: an earlier version tagged
+    // palette indices with a spare bit, which any colour with an odd green
+    // channel collided with.
+    for ([_]u32{ 0x009F2707, 0x00C78F17, 0x0000FF01, 0x00010101 }) |rgb| {
+        try std.testing.expect(toTerminalColor(rgb) & 0xFF >= 16);
+    }
 
     // Eight-colour mode must not touch the value at all.
     color_mode = .eight;

@@ -11,3 +11,8 @@ pub const Box = @import("components/Box.zig");
 pub const CyclableLabel = @import("components/generic.zig").CyclableLabel;
 pub const Label = @import("components/Label.zig");
 pub const Text = @import("components/Text.zig");
+
+test {
+    const std = @import("std");
+    std.testing.refAllDecls(@This());
+}

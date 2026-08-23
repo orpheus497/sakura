@@ -1077,7 +1077,7 @@ pub fn main(init: std.process.Init) !void {
                 state.config.gif_file,
                 state.config.gif_scaling,
                 state.config.gif_font_aspect,
-                state.config.full_color,
+                state.config.gif_stipple,
                 state.config.bg,
                 &state.animate,
                 state.config.animation_timeout_sec,
@@ -2556,4 +2556,10 @@ fn getAuthErrorMsg(err: anyerror, lang: Lang) []const u8 {
         error.PamAbort => lang.err_pam_abort,
         else => @errorName(err),
     };
+}
+
+test {
+    // Pulls in every module this file imports so their tests are discovered;
+    // Zig skips analysing container-level imports that nothing references.
+    std.testing.refAllDecls(@This());
 }

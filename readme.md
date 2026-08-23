@@ -180,11 +180,19 @@ Logs are defined by that same file:
 ## The wallpaper
 
 Sakura draws an animated GIF behind the login box. The console has no
-framebuffer, so each character cell is painted as an upper half block
-(U+2580): the foreground colour fills the top half of the cell and the
-background the bottom, which gives one pixel per column and two per row. On a
-1920x1200 panel with the default 8x16 console font that works out to a 240x150
-pixel canvas.
+framebuffer, so every cell is painted as a block glyph carrying two colours.
+Each cell is matched against the source at 2x2 resolution and the closer of two
+families wins: the sixteen quadrant patterns, which place two flat colours
+spatially, or the shades `U+2591/2/3`, which dither two colours to fake a tone
+the console does not have.
+
+That second family is what keeps any colour at all. A vt(4) console stores a
+colour in three bits plus a brightness bit -- sixteen colours, no more -- so a
+pastel has no flat equivalent and can only be approximated by mixing. Mixing
+shows as visible stipple, so it is penalised in proportion to how far apart the
+two colours are, and that penalty is relaxed where the source is strongly
+coloured. A grey sky stays flat; a pink sun keeps its hue. `gif_stipple` sets
+how hard the penalty bites.
 
 Frames are decoded as the animation plays rather than up front, so startup
 isn't delayed, and each frame is cached after its first pass.
@@ -195,8 +203,9 @@ The relevant options in `config.ini`:
 | --- | --- |
 | `animation` | `gif` by default; set to `none` to turn the wallpaper off |
 | `gif_file` | which GIF to show |
-| `gif_scaling` | `fit` (default), `fill`, `stretch` or `none` |
+| `gif_scaling` | `fill` (default), `fit`, `stretch` or `none` |
 | `gif_font_aspect` | cell height divided by cell width; see below |
+| `gif_stipple` | how readily two colours are dithered together (default `0.6`) |
 
 To use your own wallpaper, drop any GIF87a/GIF89a file — animated or still — in
 place of `/usr/local/etc/sakura/pixel_sakura.gif`, or point `gif_file` somewhere
@@ -204,10 +213,18 @@ else. Nothing needs rebuilding; log out and back in.
 
 > [!IMPORTANT]
 > `gif_font_aspect` must match your console font or the image will look
-> stretched. Half blocks are only square when a cell is exactly twice as tall
-> as it is wide, which is true of the default 8x16 font (hence the `2.0`
-> default). For any other font, set it to height divided by width — a 7x17 cell
-> is `17 / 7 = 2.43`.
+> stretched. Set it to the cell's height divided by its width: `2.0` for an
+> 8x16 or 12x24 font (the default), `17 / 7 = 2.43` for a 7x17 one.
+
+The wallpaper's detail is set by how many cells the console has, so the console
+font matters more than anything else here. On a 1920x1200 panel a 16x32 font
+gives 120x37 cells, 12x24 gives 160x50, and 8x16 gives 240x75 — each step
+roughly doubling the resolution at the cost of smaller text. The shipped
+defaults are tuned for 12x24:
+
+```
+# sysrc allscreens_flags="-f /usr/share/vt/fonts/spleen-12x24.fnt"
+```
 
 ## Console font
 
@@ -294,6 +311,10 @@ A typical shebang for a shell script looks like this:
 
 - Battery status is off by default. Set `battery_sysctl = hw.acpi.battery.life`
   to show it.
+
+- The default colours are dark ink on a light box, to sit on the light
+  wallpaper. Note that `0x00000000` means "the terminal's default colour", so
+  black has to be asked for as `0x20000000` (the `TB_HI_BLACK` style bit).
 
 - Take a look at your `.xsession` file if X doesn't start, as it can interfere
   (this file is launched with X to configure the display properly).
