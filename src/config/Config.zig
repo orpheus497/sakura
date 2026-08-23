@@ -2,13 +2,14 @@ const build_options = @import("build_options");
 
 const enums = @import("../enums.zig");
 const Animation = enums.Animation;
+const GifScaling = enums.GifScaling;
 const Input = enums.Input;
 const ViMode = enums.ViMode;
 const Bigclock = enums.Bigclock;
 const DurOffsetAlignment = enums.DurOffsetAlignment;
 
 allow_empty_password: bool = true,
-animation: Animation = .none,
+animation: Animation = .gif,
 animation_frame_delay: u16 = 5,
 animation_timeout_sec: u12 = 0,
 asterisk: ?u32 = '*',
@@ -64,6 +65,9 @@ gameoflife_fg: u32 = 0x0000FF00,
 gameoflife_entropy_interval: usize = 10,
 gameoflife_frame_delay: usize = 6,
 gameoflife_initial_density: f32 = 0.4,
+gif_file: []const u8 = build_options.config_directory ++ "/sakura/pixel_sakura.gif",
+gif_font_aspect: f32 = 2.0,
+gif_scaling: GifScaling = .fit,
 hide_borders: bool = false,
 inactivity_cmd: ?[]const u8 = null,
 inactivity_delay: u16 = 0,

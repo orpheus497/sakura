@@ -2,8 +2,8 @@
 
 ![Sakura screenshot](.github/screenshot.png "Sakura screenshot")
 
-_Note: the animation shown above is a `.dur` file; see the `dur_file` animation
-in the configuration._
+_Note: Sakura ships with an animated wallpaper, drawn on the console with
+half-block characters. See [The wallpaper](#the-wallpaper) below._
 
 Sakura is a lightweight TUI (ncurses-like) display manager built exclusively
 for FreeBSD. It runs on a virtual terminal, talks to OpenPAM directly, and does
@@ -30,6 +30,10 @@ and `sysctl(3)`) rather than through a portability layer.
   - xorg-xauth
 
   - `backlight(8)` (part of the base system, used for the brightness keybinds)
+
+- Optional:
+  - otf2bdf, only if you want to build a console font with `tools/mkvtfont.py`
+    (`pkg install otf2bdf`; `vtfontcvt` is already in base)
 
 Everything else Sakura needs — shutdown, reboot, virtual terminal switching and
 the keyboard LEDs — is handled in-process through FreeBSD system calls, so no
@@ -76,6 +80,7 @@ This installs:
 | `/usr/local/bin/sakura` | the display manager |
 | `/usr/local/bin/sakura_wrapper` | the `getty(8)` wrapper (see below) |
 | `/usr/local/etc/sakura/` | configuration, language files, examples |
+| `/usr/local/etc/sakura/pixel_sakura.gif` | the default wallpaper |
 | `/usr/local/etc/pam.d/sakura` | the PAM policy used for normal logins |
 | `/usr/local/etc/pam.d/sakura-autologin` | the PAM policy used for autologin |
 
@@ -172,6 +177,67 @@ Logs are defined by that same file:
 - The system log is at `/var/log/sakura.log` by default. If set to `null`,
   `syslog(3)` is used instead, under the `sakura` identifier.
 
+## The wallpaper
+
+Sakura draws an animated GIF behind the login box. The console has no
+framebuffer, so each character cell is painted as an upper half block
+(U+2580): the foreground colour fills the top half of the cell and the
+background the bottom, which gives one pixel per column and two per row. On a
+1920x1200 panel with the default 8x16 console font that works out to a 240x150
+pixel canvas.
+
+Frames are decoded as the animation plays rather than up front, so startup
+isn't delayed, and each frame is cached after its first pass.
+
+The relevant options in `config.ini`:
+
+| Option | Meaning |
+| --- | --- |
+| `animation` | `gif` by default; set to `none` to turn the wallpaper off |
+| `gif_file` | which GIF to show |
+| `gif_scaling` | `fit` (default), `fill`, `stretch` or `none` |
+| `gif_font_aspect` | cell height divided by cell width; see below |
+
+To use your own wallpaper, drop any GIF87a/GIF89a file — animated or still — in
+place of `/usr/local/etc/sakura/pixel_sakura.gif`, or point `gif_file` somewhere
+else. Nothing needs rebuilding; log out and back in.
+
+> [!IMPORTANT]
+> `gif_font_aspect` must match your console font or the image will look
+> stretched. Half blocks are only square when a cell is exactly twice as tall
+> as it is wide, which is true of the default 8x16 font (hence the `2.0`
+> default). For any other font, set it to height divided by width — a 7x17 cell
+> is `17 / 7 = 2.43`.
+
+## Console font
+
+vt(4) only loads bitmap fonts, so a scalable font has to be rasterised first.
+`tools/mkvtfont.py` does that, and also fixes up the two things that would
+otherwise spoil the wallpaper: `vtfontcvt` rejects the zero-sized glyphs
+`otf2bdf` emits for blanks, and block elements rasterised from outlines rarely
+tile the character cell exactly, which bands the image. The block elements are
+synthesised at the exact cell size instead.
+
+```
+$ python3 tools/mkvtfont.py -p 11 -o sakura-console.fnt \
+    /usr/local/share/fonts/nerd-fonts/Hurmit/HurmitNerdFontMono-Regular.otf
+# cp sakura-console.fnt /usr/share/vt/fonts/
+```
+
+Load it for the current session, or for every terminal at boot:
+
+```
+# vidcontrol -f /usr/share/vt/fonts/sakura-console.fnt < /dev/ttyv1
+# sysrc allscreens_flags="-f /usr/share/vt/fonts/sakura-console.fnt"
+```
+
+Whatever font you choose must contain the box drawing characters
+(U+2500-U+2518), the block elements (U+2580, U+2588) and the shade characters
+(U+2593), or the interface and the wallpaper will show gaps.
+
+No font is bundled: rasterising someone else's typeface and shipping the result
+is a licensing question best left to whoever installs it.
+
 ## Controls
 
 Use the Up/Down arrow keys to change the current field, and the Left/Right
@@ -231,6 +297,9 @@ A typical shebang for a shell script looks like this:
 
 - Take a look at your `.xsession` file if X doesn't start, as it can interfere
   (this file is launched with X to configure the display properly).
+
+- Set `animation = none` if you would rather have a plain background; the
+  wallpaper costs a few MB of memory and a little CPU while it plays.
 
 - `/usr/local/etc/sakura/startup.sh` runs before Sakura takes control of the
   terminal, which is a good place for `vidcontrol(1)` tweaks such as loading a

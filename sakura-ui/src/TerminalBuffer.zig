@@ -115,23 +115,25 @@ pub fn init(
     }
 
     if (options.full_color) {
-        err = termbox.tb_set_output_mode(termbox.TB_OUTPUT_TRUECOLOR);
+        err = termbox.tb_set_output_mode(termbox.TB_OUTPUT_256);
         if (err != 0) {
             try log_file.err(
                 io,
                 "tui",
-                "failed to set termbox2 output mode to 24-bit color: {s}",
+                "failed to set termbox2 output mode to 256 color: {s}",
                 .{termbox.tb_strerror(err)},
             );
             return error.TermboxSetOutputModeFailed;
         }
+        color_mode = .palette_256;
         try log_file.info(
             io,
             "tui",
-            "termbox2 set to 24-bit color output mode",
+            "termbox2 set to 256-color output mode",
             .{},
         );
     } else {
+        color_mode = .eight;
         try log_file.info(
             io,
             "tui",
@@ -407,13 +409,83 @@ pub fn getCell(x: usize, y: usize) ?Cell {
     return null;
 }
 
+// FreeBSD's console terminal emulator accepts at most eight parameters in a
+// CSI sequence (T_NUMSIZE in sys/teken/teken.h) and abandons the escape at the
+// ninth, printing everything after it as literal text. termbox2's 24-bit SGR
+// needs ten of them -- 38;2;R;G;B;48;2;R;G;B -- so true colour is unusable on
+// the console: the tail of every sequence lands on screen as digits. The
+// 256-colour form, 38;5;N;48;5;M, needs six and teken implements it, so colours
+// are quantised to the xterm palette on the way out.
+const ColorMode = enum { eight, palette_256 };
+var color_mode: ColorMode = .eight;
+
+/// The six levels the xterm 6x6x6 colour cube is built from.
+const cube_levels = [6]u8{ 0, 95, 135, 175, 215, 255 };
+
+fn cubeLevel(value: u8) usize {
+    var best: usize = 0;
+    var best_distance: u16 = std.math.maxInt(u16);
+    for (cube_levels, 0..) |level, i| {
+        const distance = @abs(@as(i16, value) - @as(i16, level));
+        if (distance < best_distance) {
+            best_distance = distance;
+            best = i;
+        }
+    }
+    return best;
+}
+
+fn channelDistance(r: u8, g: u8, b: u8, cr: u8, cg: u8, cb: u8) u32 {
+    const dr = @as(i32, r) - @as(i32, cr);
+    const dg = @as(i32, g) - @as(i32, cg);
+    const db = @as(i32, b) - @as(i32, cb);
+    return @intCast(dr * dr + dg * dg + db * db);
+}
+
+/// Nearest xterm-256 index, considering both the colour cube and the grayscale
+/// ramp. Never returns 0..15, so it can't collide with "terminal default".
+fn index256(r: u8, g: u8, b: u8) u32 {
+    const ri = cubeLevel(r);
+    const gi = cubeLevel(g);
+    const bi = cubeLevel(b);
+    const cube_error = channelDistance(r, g, b, cube_levels[ri], cube_levels[gi], cube_levels[bi]);
+
+    // The grayscale ramp runs 232..255 as 8, 18, ... 238.
+    const average = (@as(u32, r) + @as(u32, g) + @as(u32, b)) / 3;
+    const step: u32 = if (average <= 8) 0 else @min((average - 8 + 5) / 10, 23);
+    const gray: u8 = @intCast(8 + 10 * step);
+    const gray_error = channelDistance(r, g, b, gray, gray, gray);
+
+    if (gray_error < cube_error) return 232 + step;
+    return 16 + 36 * @as(u32, @intCast(ri)) + 6 * @as(u32, @intCast(gi)) + @as(u32, @intCast(bi));
+}
+
+/// Maps a 0xSSRRGGBB value onto what the current output mode expects, keeping
+/// the styling byte intact.
+fn toTerminalColor(value: u32) u32 {
+    // In eight-colour mode the low bits are already palette indices.
+    if (color_mode == .eight) return value;
+
+    const rgb = value & 0x00FFFFFF;
+    // Zero means "the terminal's default colour"; real black is asked for with
+    // TB_HI_BLACK, which termbox2 resolves by itself. Either way, leave it be.
+    if (rgb == 0) return value;
+
+    const styling = value & 0xFF000000;
+    return styling | index256(
+        @intCast((rgb >> 16) & 0xFF),
+        @intCast((rgb >> 8) & 0xFF),
+        @intCast(rgb & 0xFF),
+    );
+}
+
 pub fn setCell(x: usize, y: usize, cell: Cell) !void {
     if (termbox.tb_set_cell(
         @intCast(x),
         @intCast(y),
         cell.ch,
-        cell.fg,
-        cell.bg,
+        toTerminalColor(cell.fg),
+        toTerminalColor(cell.bg),
     ) != 0) {
         return error.TermboxSetCellFailed;
     }
@@ -431,7 +503,7 @@ pub fn reclaim(self: TerminalBuffer) !void {
         const err = termbox.tb_init();
         if (err != 0 and err != termbox.TB_ERR_INIT_ALREADY) return error.TermboxReinitFailed;
 
-        if (self.full_color and termbox.tb_set_output_mode(termbox.TB_OUTPUT_TRUECOLOR) != 0) {
+        if (self.full_color and termbox.tb_set_output_mode(termbox.TB_OUTPUT_256) != 0) {
             return error.TermboxSetOutputModeFailed;
         }
 
@@ -677,4 +749,53 @@ fn wrapCursorReverse(ptr: *anyopaque) !bool {
     state.active_widget_index = if (state.active_widget_index == 0) state.handlable_widgets.items.len - 1 else state.active_widget_index - 1;
     state.update = true;
     return false;
+}
+
+test "index256 maps onto the xterm palette" {
+    const expectEqual = std.testing.expectEqual;
+
+    // Corners of the 6x6x6 colour cube.
+    try expectEqual(@as(u32, 16), index256(0, 0, 0));
+    try expectEqual(@as(u32, 231), index256(255, 255, 255));
+    // 95,135,175 are cube levels 1, 2 and 3: 16 + 36*1 + 6*2 + 3.
+    try expectEqual(@as(u32, 67), index256(95, 135, 175));
+
+    // A neutral grey is served better by the 232..255 ramp than by the cube.
+    try expectEqual(@as(u32, 244), index256(128, 128, 128));
+
+    // Never produces an index that could be mistaken for "terminal default"
+    // or for one of the eight ANSI colours.
+    var r: u32 = 0;
+    while (r < 256) : (r += 17) {
+        var g: u32 = 0;
+        while (g < 256) : (g += 17) {
+            var b: u32 = 0;
+            while (b < 256) : (b += 17) {
+                const index = index256(@intCast(r), @intCast(g), @intCast(b));
+                try std.testing.expect(index >= 16 and index <= 255);
+            }
+        }
+    }
+}
+
+test "toTerminalColor keeps styling and passes defaults through" {
+    const expectEqual = std.testing.expectEqual;
+
+    color_mode = .palette_256;
+    defer color_mode = .eight;
+
+    // Terminal default stays default.
+    try expectEqual(@as(u32, 0), toTerminalColor(Color.DEFAULT));
+    // Explicit black is requested with the style bit and must survive intact.
+    try expectEqual(@as(u32, Styling.HI_BLACK), toTerminalColor(Color.TRUE_BLACK));
+
+    // The styling byte is preserved and the colour lands in the low byte.
+    const bold_white = toTerminalColor(Styling.BOLD | Color.TRUE_WHITE);
+    try expectEqual(@as(u32, Styling.BOLD), bold_white & 0xFF000000);
+    try expectEqual(@as(u32, 231), bold_white & 0xFF);
+
+    // Eight-colour mode must not touch the value at all.
+    color_mode = .eight;
+    try expectEqual(@as(u32, Color.ECOL_RED), toTerminalColor(Color.ECOL_RED));
+    try expectEqual(@as(u32, Color.TRUE_WHITE), toTerminalColor(Color.TRUE_WHITE));
 }

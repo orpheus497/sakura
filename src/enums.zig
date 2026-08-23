@@ -7,7 +7,20 @@ pub const Animation = enum {
     colormix,
     gameoflife,
     dur_file,
+    gif,
     lua,
+};
+
+/// How the GIF wallpaper is mapped onto the console.
+pub const GifScaling = enum {
+    /// Scale until one axis fills the screen, letterboxing the other.
+    fit,
+    /// Scale until both axes are covered, cropping the overflow.
+    fill,
+    /// Ignore the aspect ratio and fill the screen exactly.
+    stretch,
+    /// One sub-pixel per source pixel, centred.
+    none,
 };
 
 pub const DisplayServer = enum {

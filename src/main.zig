@@ -27,6 +27,7 @@ const ColorMix = @import("animations/ColorMix.zig");
 const Doom = @import("animations/Doom.zig");
 const DurFile = @import("animations/DurFile.zig");
 const GameOfLife = @import("animations/GameOfLife.zig");
+const Gif = @import("animations/Gif.zig");
 const Matrix = @import("animations/Matrix.zig");
 const Lua = @import("animations/Lua.zig");
 const auth = @import("auth.zig");
@@ -986,7 +987,10 @@ pub fn main(init: std.process.Init) !void {
         try state.tty_label.setTextBuf(&state.tty_buf, "{s}", .{tty_name});
     }
 
-    // Initialize the animation, if any
+    // Initialize the animation, if any.
+    // Note: `gif_storage` lives out here rather than inside the switch prong
+    // because the Widget holds a pointer into it for the whole session.
+    var gif_storage: ?Gif = null;
     var animation: ?*Widget = null;
     switch (state.config.animation) {
         .none => {},
@@ -1062,6 +1066,38 @@ pub fn main(init: std.process.Init) !void {
             );
             animation = dur.widget();
         },
+        .gif => {
+            // The wallpaper is on by default, so a missing or corrupt file must
+            // never stop someone logging in: report it and carry on unadorned.
+            if (Gif.init(
+                state.allocator,
+                state.io,
+                &state.buffer,
+                &state.log_file,
+                state.config.gif_file,
+                state.config.gif_scaling,
+                state.config.gif_font_aspect,
+                state.config.full_color,
+                state.config.bg,
+                &state.animate,
+                state.config.animation_timeout_sec,
+            )) |loaded| {
+                gif_storage = loaded;
+                animation = gif_storage.?.widget();
+            } else |err| {
+                try state.info_line.addMessage(
+                    state.lang.err_gif,
+                    state.config.error_bg,
+                    state.config.error_fg,
+                );
+                try state.log_file.err(
+                    state.io,
+                    "tui",
+                    "failed to load the gif wallpaper: {s}",
+                    .{@errorName(err)},
+                );
+            }
+        },
         .lua => {
             var lua = try Lua.init(
                 state.io,
@@ -1090,7 +1126,7 @@ pub fn main(init: std.process.Init) !void {
     );
 
     state.auth_fails = 0;
-    state.animate = state.config.animation != .none;
+    state.animate = animation != null;
     state.edge_margin = Position.init(
         state.config.edge_margin,
         state.config.edge_margin,

@@ -154,6 +154,10 @@ fn installSakura(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, 
         try installFile(io, "res/example.dur", config_dir, sakura_config_directory, "example.dur", .{ .permissions = .fromMode(0o755) });
 
         try installFile(io, "res/example.lua", config_dir, sakura_config_directory, "example.lua", .{ .permissions = .fromMode(0o755) });
+
+        // The default login wallpaper. Installed unconditionally (not only with
+        // the config) so that installnoconf still repairs a deleted wallpaper.
+        try installFile(io, "res/pixel_sakura.gif", config_dir, sakura_config_directory, "pixel_sakura.gif", .{ .permissions = .fromMode(0o644) });
     }
 
     {
