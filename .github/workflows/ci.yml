@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  invariants:
+    name: Cross-file invariants
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to commit SHAs, not tags: a tag can be moved to point
+      # at different code without the workflow changing. The comment records the
+      # release each SHA corresponds to so it can be bumped deliberately.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Pure text checks over the tree, so they need no FreeBSD and no toolchain.
+      - run: python3 tools/check_invariants.py
+
+  build:
+    name: Build and test on FreeBSD
+    runs-on: ubuntu-latest
+    # The invariant checks are seconds of pure text comparison; the FreeBSD VM is
+    # minutes. Gate on them so obvious drift fails before a VM is spent.
+    needs: invariants
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # Sakura cannot be cross-compiled from Linux: it translates FreeBSD base
+      # system headers (security/pam_appl.h, login_cap.h, sys/kbio.h,
+      # sys/consio.h) that are not part of the libc headers Zig bundles. The
+      # build must therefore happen on a real FreeBSD userland.
+      - name: Build in a FreeBSD VM
+        uses: vmactions/freebsd-vm@d0518f912576ae759075aa00fb9fe27037940271 # v1.5.4
+        with:
+          usesh: true
+          # ca_root_nss is needed because the dependencies in zig-pkg/ are not
+          # committed; zig fetches them over TLS on first build.
+          prepare: |
+            pkg install -y zig git libxcb ca_root_nss
+          run: |
+            set -e
+            zig version
+            zig build
+            zig build test
+            # The program's own validator, run against the configuration we ship.
+            ./zig-out/bin/sakura --validate-config res/config.ini
+            # The X11 path is optional at build time, so check it still compiles out.
+            zig build -Denable_x11_support=false

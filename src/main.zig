@@ -191,7 +191,7 @@ pub fn main(init: std.process.Init) !void {
             std.process.exit(0);
         }
         if (res.args.version != 0) {
-            std.log.info("sakura version " ++ build_options.version, .{});
+            std.log.info("Sakura version " ++ build_options.version, .{});
             std.process.exit(0);
         }
         if (res.args.config) |path| config_parent_path = path;
