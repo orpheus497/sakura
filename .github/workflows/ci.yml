@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  invariants:
+    name: Cross-file invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pure text checks over the tree, so they need no FreeBSD and no toolchain.
+      # Running them first means the obvious drift is caught before spending a VM.
+      - run: python3 tools/check_invariants.py
+
+  build:
+    name: Build and test on FreeBSD
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sakura cannot be cross-compiled from Linux: it translates FreeBSD base
+      # system headers (security/pam_appl.h, login_cap.h, sys/kbio.h,
+      # sys/consio.h) that are not part of the libc headers Zig bundles. The
+      # build must therefore happen on a real FreeBSD userland.
+      - name: Build in a FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          # ca_root_nss is needed because the dependencies in zig-pkg/ are not
+          # committed; zig fetches them over TLS on first build.
+          prepare: |
+            pkg install -y zig git libxcb ca_root_nss
+          run: |
+            set -e
+            zig version
+            zig build
+            zig build test
+            # The program's own validator, run against the configuration we ship.
+            ./zig-out/bin/sakura --validate-config res/config.ini
+            # The X11 path is optional at build time, so check it still compiles out.
+            zig build -Denable_x11_support=false

@@ -4,3 +4,4 @@ zig-out/
 valgrind.log
 .zig-cache
 zig-pkg
+__pycache__/

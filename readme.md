@@ -46,7 +46,7 @@ helper binaries are required for those.
 ## Building
 
 ```
-$ git clone <your-clone-url> sakura
+$ git clone https://github.com/orpheus497/sakura.git sakura
 $ cd sakura
 $ zig build
 ```
@@ -79,8 +79,16 @@ This installs:
 | --- | --- |
 | `/usr/local/bin/sakura` | the display manager |
 | `/usr/local/bin/sakura_wrapper` | the `getty(8)` wrapper (see below) |
-| `/usr/local/etc/sakura/` | configuration, language files, examples |
+| `/usr/local/etc/sakura/config.ini` | the configuration, with `config.ini.example` kept pristine beside it |
 | `/usr/local/etc/sakura/pixel_sakura.gif` | the default wallpaper |
+| `/usr/local/etc/sakura/startup.sh` | runs before the terminal is taken over (`start_cmd`) |
+| `/usr/local/etc/sakura/setup.sh` | shell environment setup after login (`setup_cmd`) |
+| `/usr/local/etc/sakura/gettytab.example` | the `/etc/gettytab` block, filled in (see below) |
+| `/usr/local/etc/sakura/ttys.example` | the `/etc/ttys` line, filled in (see below) |
+| `/usr/local/etc/sakura/example.dur` | the default `dur_file` animation |
+| `/usr/local/etc/sakura/example.lua` | the example `lua` animation |
+| `/usr/local/etc/sakura/lang/` | the 25 language files |
+| `/usr/local/etc/sakura/custom-sessions/` | your own session entries, plus a `README` on the supported keys |
 | `/usr/local/etc/pam.d/sakura` | the PAM policy used for normal logins |
 | `/usr/local/etc/pam.d/sakura-autologin` | the PAM policy used for autologin |
 
@@ -159,9 +167,10 @@ touches `/etc/gettytab` or `/etc/ttys`, so remember to revert those by hand.
 
 ## Configuration
 
-All configuration lives in `/usr/local/etc/sakura/config.ini`. The file is
-fully commented and includes the default values. A pristine copy is kept next
-to it as `config.ini.example`.
+All configuration lives in `/usr/local/etc/sakura/config.ini`. The file is fully
+commented and shows the value of every option, which is the built-in default
+except where a comment says otherwise. A pristine copy is kept next to it as
+`config.ini.example`.
 
 You can check the validity of your configuration file (i.e. whether there are
 any errors in it) with:
@@ -176,6 +185,50 @@ Logs are defined by that same file:
 
 - The system log is at `/var/log/sakura.log` by default. If set to `null`,
   `syslog(3)` is used instead, under the `sakura` identifier.
+
+Sakura reads the configuration path given by `--config` (`-c`) if you pass one,
+and `/usr/local/etc/sakura/config.ini` otherwise.
+
+### Migrating from Ly
+
+An existing Ly configuration can be used as-is: Sakura migrates it on load, and
+the same applies to a Ly save file. Nothing needs converting by hand, but it is
+worth knowing what changes, because the migration is silent.
+
+Renamed, with the old name still accepted:
+
+| Ly | Sakura |
+| --- | --- |
+| `ly_log` | `sakura_log` |
+| `min_refresh_delta` | `animation_frame_delay` |
+| `blank_password` | `clear_password` |
+
+Dropped, because they have no FreeBSD equivalent:
+
+- `battery_id` — the Linux sysfs identifier. Use `battery_sysctl`, which takes a
+  sysctl MIB such as `hw.acpi.battery.life`, instead.
+- `login_defs_path` — `/etc/login.defs` is a Linux file. The UID range is fixed at
+  build time with `-Duid_min` and `-Duid_max`.
+
+Folded into other options: `sleep_key`/`sleep_cmd` and
+`hibernate_key`/`hibernate_cmd` become custom keybinds, since FreeBSD has no
+equivalent of the helpers Ly called. `animate` is folded into `animation`, and
+`save`/`save_file` into `save_file_dir`.
+
+Options that changed type — `animation`, `bigclock` and `default_input` moved
+from integers to names, and the colour options from 16-bit codes to the
+`0xSSRRGGBB` form — are converted for you. A configuration whose colours are all
+old-style eight-colour codes is taken to predate true-colour support, so
+`full_color` is turned off and the remaining colours are set to their
+eight-colour equivalents rather than to Sakura's defaults.
+
+Several Ly options no longer exist at all and are ignored if present:
+`wayland_specifier`, `wayland_cmd`, `x_cmd_setup`, `mcookie_cmd`,
+`term_reset_cmd`, `term_restore_cursor_cmd`, `console_dev`, `shutdown_cmd`,
+`restart_cmd`, `load`, `max_desktop_len`, `max_login_len`, `max_password_len`,
+`hide_key_hints`, `hide_keyboard_locks`, `hide_version_string` and `show_tty`.
+Shutdown and restart are no longer commands because Sakura calls `reboot(2)`
+directly.
 
 ## The wallpaper
 
@@ -210,6 +263,29 @@ The relevant options in `config.ini`:
 To use your own wallpaper, drop any GIF87a/GIF89a file — animated or still — in
 place of `/usr/local/etc/sakura/pixel_sakura.gif`, or point `gif_file` somewhere
 else. Nothing needs rebuilding; log out and back in.
+
+### Other backgrounds
+
+`animation` selects what is drawn behind the login box. `gif` is the default and
+everything above describes it, but the animations Sakura inherited from Ly are
+all still available, each with its own `config.ini` options:
+
+| `animation` | What it draws |
+| --- | --- |
+| `gif` | the animated wallpaper described above (default) |
+| `none` | nothing; the plain background colour |
+| `doom` | the PSX DOOM fire effect (`doom_*`) |
+| `matrix` | falling CMatrix glyphs (`cmatrix_*`) |
+| `colormix` | a slow three-colour shader (`colormix_*`) |
+| `gameoflife` | Conway's Game of Life (`gameoflife_*`) |
+| `dur_file` | a [durdraw](https://github.com/cmang/durdraw) animation (`dur_file_path`, `dur_*`) |
+| `lua` | your own animation written in LuaJIT (`lua_animation_file`) |
+
+`dur_file` defaults to the sakura blossom in
+`/usr/local/etc/sakura/example.dur`, and `lua` to the bouncing squares in
+`example.lua`, which is commented as a starting point for writing your own. Note
+that a `.dur` file saved with a 256-colour range will not draw while
+`full_color` is off.
 
 > [!IMPORTANT]
 > `gif_font_aspect` must match your console font or the image will look
@@ -249,8 +325,10 @@ Load it for the current session, or for every terminal at boot:
 ```
 
 Whatever font you choose must contain the box drawing characters
-(U+2500-U+2518), the block elements (U+2580, U+2588) and the shade characters
-(U+2593), or the interface and the wallpaper will show gaps.
+(U+2500-U+2518) that the interface is drawn with, and every glyph the wallpaper
+is composed from, or the interface and the wallpaper will show gaps. The
+wallpaper needs the halves and the full block (U+2580, U+2584, U+2588, U+258C,
+U+2590), the quadrants (U+2596-U+259F) and the three shades (U+2591-U+2593).
 
 No font is bundled: rasterising someone else's typeface and shipping the result
 is a licensing question best left to whoever installs it.
@@ -333,7 +411,9 @@ TUI display manager by the Fairy Glade. All the groundwork — the TUI, the
 animations, the session handling and the Zig rewrite — comes from Ly and its
 contributors. Sakura narrows that work down to a single platform.
 
-Sakura takes its theming from and heavily inspired by https://github.com/Keyitdev/sddm-astronaut-theme , the pixel_sakura.gif and pixel_sakura_static.png both come directly from here
+The theming is heavily inspired by
+[sddm-astronaut-theme](https://github.com/Keyitdev/sddm-astronaut-theme), and the
+default wallpaper `pixel_sakura.gif` comes directly from there.
 
 ## License
 
