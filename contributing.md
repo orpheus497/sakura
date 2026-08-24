@@ -52,8 +52,10 @@ Useful while testing:
 Some invariants span several files and are easy to break in one place only:
 
 - **Configuration.** Every field in `src/config/Config.zig` must appear in
-  `res/config.ini` with the same default, and vice versa. `res/config.ini` is the
-  user-facing documentation as well as the shipped file.
+  `res/config.ini`, and vice versa. The two values must match unless
+  `res/config.ini` documents the difference as a deliberate shipped override —
+  `start_cmd` is the one such case today. `res/config.ini` is the user-facing
+  documentation as well as the shipped file.
 - **Translations.** Every key in `src/config/Lang.zig` must exist in all 25 files
   in `res/lang/`. `res/lang/normalize_lang_files.py` reorders them to match and
   leaves a blank line where a translation is missing.

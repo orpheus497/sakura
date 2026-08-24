@@ -1,6 +1,9 @@
 # TODOS
 
-Last updated: 2026-08-24 08:48
+Last updated: 2026-08-24 10:17
+
+**All items are closed.** Every entry below is historical. Per-item results are indexed in
+the BLUEPRINT §8 implementation registry.
 
 Source: USER/DEVELOPER request 2026-08-24 — *"make sure all documentation and details have
 been completely updated to the new branding and focus"*, followed by *"be more
@@ -88,16 +91,19 @@ Six of six mismatch. This is the normal case, not an edge case.
 line 33), before any block glyph, and occurs identically with the old 8-entry table. C2
 neither caused nor worsened it.
 
-**Not verifiable against the documented font.** `readme.md` uses Hurmit Nerd Font Mono,
-which is not installed here. If Hurmit's bbox width happens to equal its advance the
-workflow would work for that one font, which may be why this was never noticed.
+**Confirmed against the documented font at 10:00.** Hurmit Nerd Font Mono *was* installed;
+`find` missed it, `fc-list` found it. At `-p 11` the tool reports `advance fixed 0` — its
+bounding box already equals its advance. The hypothesis above was therefore right: Hurmit
+was the one font C5 never broke, which is why it went unnoticed.
 
-- Q1: Approve fixing it? Proposed: synthesise at the advance width and emit
-  `BBX <dwidth> <bh> 0 <byo>`, reading `DWIDTH` per glyph instead of using `bw`.
-- Q2: The blank-patching path (`:136`) has the same inconsistency — it writes `BBX 1 1 0 0`
-  while leaving the original `DWIDTH`. Include it in the same fix?
-- Q3: Should the tool hard-fail with a clear message when bbox width != DWIDTH, rather
-  than letting `vtfontcvt` produce a cryptic line-number error?
+- Q1 — **answered, and the proposal was wrong.** Synthesising at the advance width is the
+  wrong direction. Testing showed normalising `DWIDTH` *up* to the bounding box is accepted
+  while shrinking the box to the advance fails, because the overhanging glyphs no longer
+  fit. The bounding box is the console cell. See D-006.
+- Q2 — **subsumed.** The normalisation runs over the whole glyph buffer before branching,
+  so the blank-patching path is covered without a separate change.
+- Q3 — **moot.** The mismatch is corrected rather than fatal, so there is nothing to
+  hard-fail on; the tool reports an `advance fixed` count instead.
 
 ---
 
@@ -124,11 +130,29 @@ workflow would work for that one font, which may be why this was never noticed.
 
 ---
 
-## BACKLOG
+## BACKLOG — EMPTY
 
-*(Group C — C1, C2, C3, C4 all completed; see COMPLETED sections above. C5 raised.)*
+Every item below is **closed**; the original text is retained as the evidence record for
+what was found and why. Nothing here is outstanding. Disposition:
 
-### Group D — Defaults documented wrong
+| Group | Items | Disposition |
+| --- | --- | --- |
+| A | A1, A2 | Fixed — Stage 1 |
+| B | B1, B2 | Fixed — Stage 1 |
+| C | C1–C4 | Fixed — Stages 1–2 · C5 fixed after being raised mid-execution |
+| D | D1–D3 | Fixed — Stage 3 |
+| E | E1–E6 | Fixed — Stages 3–4 |
+| F | F1, F3 | Fixed — Stages 3–4 |
+| F | F2 | **Cancelled** — invalid finding, see D-007 |
+
+---
+
+## HISTORICAL RECORD — the original findings
+
+*(Group C — C1, C2, C3, C4 all completed; see COMPLETED sections above. C5 raised and
+since fixed.)*
+
+### Group D — Defaults documented wrong *(all fixed)*
 
 `readme.md:157` claims `config.ini` "is fully commented and includes the default values."
 Three items falsify it.
@@ -149,7 +173,7 @@ parameters`), not rebrand damage.
 **D3. `start_cmd` ships a path; `Config.zig` defaults to `null`.** Intentional, but
 undocumented as a divergence.
 
-### Group E — Missing documentation
+### Group E — Missing documentation *(all fixed)*
 
 **E1.** `readme.md:76-86` install table lists 6 paths. `installexe` also writes
 `startup.sh`, `setup.sh`, `gettytab.example`, `ttys.example`, `example.dur`, `example.lua`,
@@ -174,7 +198,7 @@ compiles.
 `matrix`, `colormix`, `gameoflife`, `dur_file`, `lua`. The `-c/--config` flag
 (`src/main.zig:163`) is undocumented too.
 
-### Group F — Dead weight *(gated on Directive 3)*
+### Group F — Dead weight *(F1/F3 fixed; F2 cancelled — D-007)*
 
 **F1. `res/pixel_sakura_static.png`** — 543 KB, tracked, credited at `readme.md:336`,
 never installed by `install.zig`, referenced by no code or config.

@@ -1,14 +1,24 @@
 # PLANS
 
 Forward-looking strategy for items scoped out of DECISIONS_LOG that are not yet
-implemented. Last updated: 2026-08-24 08:48.
+implemented. Last updated: 2026-08-24 10:17.
 
-**Status: awaiting approval.** Nothing here is authorised for execution. Per Directive 1
-and Phase 1.4, execution halts until the USER approves.
+**Nothing is currently pending.** The one plan below has been fully executed; it is kept
+as a historical record of the reasoning, not as outstanding work.
 
 ---
 
-## Remediation Plan — Post-Rebrand Documentation Defects
+## ARCHIVED — Remediation Plan, Post-Rebrand Documentation Defects
+*Executed 2026-08-24, stages 1–4. Retained for its rationale and risk analysis.*
+
+**Outcome:** all four stages completed. C5 was discovered mid-execution, approved, and
+fixed — note that the remedy proposed for it below was refuted by testing (D-006). F2 was
+cancelled as an invalid finding (D-007). F1 and the A1 removal option were resolved by
+explicit USER instruction. The "Standing Invariant Checks" proposed at the end were
+implemented as `tools/check_invariants.py` and wired into CI.
+
+Per-item results are in the BLUEPRINT §8 implementation registry; narrative is in
+PROGRESS.md.
 
 Four stages, ordered by user-visible wrongness. Each stage is independently approvable and
 independently shippable; later stages do not depend on earlier ones.
@@ -81,20 +91,24 @@ banding on a real console.
 | E6 | Document the remaining `animation` values and the `-c/--config` flag |
 | E4 | Restore a FreeBSD-specific `contributing.md` |
 | E5 | Add `.github/workflows/` with at least a `zig build` job |
-| F1 | `res/pixel_sakura_static.png` — **blocked on Directive 3**, needs explicit instruction |
-| F2 | 13 orphan lang strings — **blocked on Directive 3**, needs explicit instruction |
+| F1 | `res/pixel_sakura_static.png` — was gated on Directive 3; USER instructed removal, verified unreferenced, removed |
+| F2 | 13 orphan lang strings — was gated on Directive 3; verification showed they are reachable and documented, so **cancelled** (D-007) |
 
 ---
 
-## Standing Invariant Checks *(proposed, not scheduled)*
+## Standing Invariant Checks — IMPLEMENTED
 
-D-001 surfaced two invariants that drift silently. Worth automating rather than
-re-auditing each session:
+D-001 surfaced invariants that drift silently. These were implemented as
+`tools/check_invariants.py` and run as the first CI job, gating the FreeBSD build:
 
-1. **Config/lang parity.** `Config.zig` field set ≡ `config.ini` key set; `Lang.zig` key
-   set ≡ every locale's key set. Both are currently checkable in a few lines and both
-   caught real defects (C4).
-2. **Wallpaper glyph set.** `Gif.zig`'s codepoint tables ≡ `mkvtfont.py`'s `BLOCKS` ≡ the
-   readme's stated requirement. Three of four drifted (C1–C3).
+1. **Config parity.** `Config.zig` field set ≡ `config.ini` key set. ✅
+2. **Lang parity.** `Lang.zig` key set ≡ every locale's key set. ✅
+3. **Installed locales.** `res/lang/*.ini` ≡ the `languages` array in `install.zig`. ✅
+4. **Wallpaper glyph set.** `Gif.zig`'s codepoint tables ≡ `mkvtfont.py`'s `BLOCKS`. ✅
 
-Natural home is Stage 4's CI job (E5).
+The checker refuses to pass vacuously on empty input, after its own first draft passed a
+check it should have failed.
+
+**Still not automated:** the cell-geometry invariant from C5 — that glyphs are synthesised
+at the `FONTBOUNDINGBOX` cell and every `DWIDTH` matches it. Recorded in BLUEPRINT §6 as
+prose only, since verifying it needs a real font build rather than a text comparison.

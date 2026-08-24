@@ -15,17 +15,20 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+# Function purpose: read a tree file by path segments relative to the repository
+# root, so every check reads the real file regardless of the working directory
+# CI happens to invoke this from.
 def read(*parts):
     with open(os.path.join(ROOT, *parts), encoding="UTF-8") as fh:
         return fh.read()
 
 
-# Function purpose: report one invariant's outcome and remember any failure, so
-# every invariant runs and the whole picture is reported in a single CI run
-# rather than one failure per push.
 FAILED = []
 
 
+# Function purpose: report one invariant's outcome and remember any failure, so
+# every invariant runs and the whole picture is reported in a single CI run
+# rather than one failure per push.
 def check(name, missing_a, missing_b, label_a, label_b):
     if not missing_a and not missing_b:
         print("  ok    %s" % name)
@@ -38,12 +41,16 @@ def check(name, missing_a, missing_b, label_a, label_b):
     FAILED.append(name)
 
 
+# Function purpose: extract a Zig struct's field-name set from its source. Both
+# Config.zig and Lang.zig are bare struct files whose top-level `name: Type =
+# default,` lines are the field set, so one reader serves both.
 def zig_fields(text):
-    """Top-level `name: Type = default,` declarations, which is how both
-    Config.zig and Lang.zig declare their field sets."""
     return {m.group(1) for m in re.finditer(r"^([a-z0-9_]+):", text, re.M)}
 
 
+# Function purpose: extract the key set from an INI file, used for both
+# res/config.ini and the locale files so their keys can be compared against the
+# Zig structs they mirror.
 def ini_keys(text):
     return {m.group(1) for m in re.finditer(r"^([a-z0-9_]+)\s*=", text, re.M)}
 

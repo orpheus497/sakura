@@ -1,6 +1,6 @@
 # BLUEPRINT — Sakura System Architecture
 
-Last updated: 2026-08-24 08:48
+Last updated: 2026-08-24 10:17
 
 ## 1. Product Identity
 
@@ -93,7 +93,9 @@ Prefix defaults follow the FreeBSD ports layout: `prefix_directory=/usr/local`,
 Substitution tokens `$PREFIX_DIRECTORY`, `$CONFIG_DIRECTORY`, `$EXECUTABLE_NAME`,
 `$WRAPPER_NAME`, `$TTY_DEVICE`, `$DEFAULT_TTY` are patched in by `install.zig` at install
 time. **Any example path written inside a comment is subject to the same substitution**,
-which is the root cause of TODO B2.
+which is what caused B2: upstream comments carrying `/usr`-relative example paths were
+silently re-pointed to `/usr/local` rather than reviewed. B2 is fixed; the hazard is
+permanent and applies to any future prefix change.
 
 ## 6. Wallpaper Rendering Contract
 
@@ -113,8 +115,15 @@ This is the fork's headline feature and the source of several cross-file invaria
 
 **Invariant:** the glyph set above is referenced in four places that must agree —
 `Gif.zig`, `tools/mkvtfont.py` (`BLOCKS` synthesis + `SUBSET` range), `readme.md` (font
-requirements), and any console font the user loads. TODO C1–C3 exist because three of
-those four drifted.
+requirements), and any console font the user loads. Three of those four had drifted, which
+is what C1–C3 were; all three are fixed and the first three are now enforced by
+`tools/check_invariants.py` in CI.
+
+**Second invariant, added after C5:** the glyphs must also be synthesised at the *cell*
+size, and for a fixed-cell console font the cell is the BDF `FONTBOUNDINGBOX`, not the
+source face's advance. `mkvtfont.py` restates every glyph's `DWIDTH` to the cell for this
+reason. This is geometry rather than glyph coverage, so `check_invariants.py` does not
+cover it.
 
 ## 7. Configuration Contract
 
@@ -127,5 +136,50 @@ those four drifted.
   (`login_defs_path`, `battery_id`). `sleep_*`/`hibernate_*` are folded into custom binds.
 
 **Invariant:** `Config.zig` field set ≡ `config.ini` key set (verified 94/94, both
-directions), and `Lang.zig` key set ≡ every `res/lang/*.ini` key set (verified 82/82 for
-`en`; 24 locales are one key short — TODO C4).
+directions), and `Lang.zig` key set ≡ every `res/lang/*.ini` key set (verified 82/82 across
+**all 25 locales**; the 24 that were missing `err_gif` were completed by C4). Values match
+too, with one deliberate exception documented in place: `start_cmd` is `null` in
+`Config.zig` and points at `startup.sh` in the shipped file.
+
+Both are enforced by `tools/check_invariants.py`.
+
+**Note on `Lang`:** `main.zig:1223-1224` reflects over `@typeInfo(Lang).@"struct".fields`
+to expose every key as a `$<key>` substitution in custom keybind names, and
+`config.ini:485-487` documents that to users. Every field is therefore reachable, and no
+`Lang` field can be treated as dead on the strength of a static grep — see D-007.
+
+## 8. Implementation Registry
+
+This is the registry `AGENTS.md` names as step 3 of the TODOS lifecycle
+(backlog → active list → registry). A TODO is recorded here once it is implemented **and**
+verified; the evidence column is what was actually run, not what was intended. Working
+detail stays in PROGRESS.md; this is the durable index.
+
+| ID | Implemented | Verified by |
+| --- | --- | --- |
+| A1 | Ly logo replaced by a sakura blossom in `res/example.dur` | 22/22 checks against `DurFile.zig:validate()`; container name now `sakura-blossom.dur` |
+| A2 | `res/setup.sh` licence reference corrected to `license.md` | grep: no `the LICENSE file` remains |
+| B1 | `res/config.ini:1-4` restated for the vt(4) sixteen-colour reality | grep: no `24-bit true color` claim remains |
+| B2 | `res/config.ini` session-directory examples no longer expand to `/usr/local/local/…` | grep: no `$PREFIX_DIRECTORY/local/` remains |
+| C1 | `mkvtfont.py` docstring rewritten for the quadrant+shade renderer | matches `Gif.zig:45-68` |
+| C2 | `mkvtfont.py` synthesises 18 glyphs, up from 8 | 8 prior predicates byte-identical over 5 cell sizes; tiling algebra holds; 18/18 in an end-to-end BDF |
+| C3 | `readme.md` font requirement lists every glyph the renderer emits | cross-checked against `Gif.zig` |
+| C4 | `err_gif` translated into all 24 remaining locales | 82/82 × 25 via `check_invariants.py` |
+| C5 | `mkvtfont.py` restates `DWIDTH` to the cell width | 8/8 fonts build, previously 0/6; Hurmit reports `advance fixed 0` |
+| D1 | Stale `# default: 0.5` comments removed; box-position comments corrected to top/left origin | read against `main.zig:2288-2291` |
+| D2 | `Config.zig` doom defaults aligned to the shipped palette | defaults diff: only `start_cmd` diverges |
+| D3 | `start_cmd` divergence documented in place | as above |
+| E1 | Install table 6 → 14 rows | matches `install.zig` |
+| E2 | Clone URL filled in | matches `git remote` |
+| E3 | "Migrating from Ly" section | written from `migrator.zig` |
+| E4 | `contributing.md` restored for this fork | — |
+| E5 | `.github/workflows/ci.yml` + `tools/check_invariants.py` | checker negative-tested; actions pinned to verified SHAs |
+| E6 | All eight `animation` values and `-c/--config` documented | `--config` semantics read from `main.zig:185-230` |
+| F1 | `res/pixel_sakura_static.png` removed | verified unreferenced before removal |
+| F3 | CLI version string capitalisation matched to the UI | `sakura --version` → `Sakura version 1.0.0` |
+
+**Not implemented, deliberately:**
+
+| ID | Disposition |
+| --- | --- |
+| F2 | **Cancelled.** The 13 strings are reachable by reflection and documented to users. Removing them would have deleted a feature — see D-007. |

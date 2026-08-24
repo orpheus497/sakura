@@ -33,8 +33,8 @@ reflected over. Only `Lang` is, via that one site.
 
 ---
 
-## D-006 — Block synthesis is keyed to the wrong width (raised, not fixed)
-**2026-08-24 09:17 — OPEN, needs USER approval to fix**
+## D-006 — Block synthesis was keyed to the wrong width
+**2026-08-24 09:17 raised · 09:47 RESOLVED — approved, fixed, verified**
 
 Discovered while verifying C2 end-to-end. `tools/mkvtfont.py` emits synthesised glyphs at
 the `FONTBOUNDINGBOX` width, but a console tiles cells at the *advance* width (`DWIDTH`).

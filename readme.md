@@ -186,8 +186,11 @@ Logs are defined by that same file:
 - The system log is at `/var/log/sakura.log` by default. If set to `null`,
   `syslog(3)` is used instead, under the `sakura` identifier.
 
-Sakura reads the configuration path given by `--config` (`-c`) if you pass one,
-and `/usr/local/etc/sakura/config.ini` otherwise.
+`--config` (`-c`) takes a *directory*, not a file: Sakura reads `config.ini`
+inside it, along with `lang/` and the save file. Without it, that directory is
+`/usr/local/etc/sakura`, so the configuration is
+`/usr/local/etc/sakura/config.ini`. Note that `--validate-config` differs — it
+takes the path of the file itself.
 
 ### Migrating from Ly
 
