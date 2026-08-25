@@ -5,6 +5,100 @@ TODOs scoped into detail. Most recent at top.
 
 ---
 
+## D-009 — Relicensed from WTFPL to BSD 2-Clause
+**2026-08-25 — RESOLVED by USER instruction; one sub-question left open**
+
+USER directed that the project licence become a BSD licence. Chosen variant: **BSD
+2-Clause** (SPDX `BSD-2-Clause`), the "Simplified" or "FreeBSD" licence — the same one
+FreeBSD itself uses, which fits a FreeBSD-only project and is the shortest permissive form.
+Copyright line: `Copyright (c) 2026 orpheus497`.
+
+**Why this is permissible.** Sakura inherits its groundwork from Ly, which is WTFPL. WTFPL
+grants unrestricted permission ("You just DO WHAT THE FUCK YOU WANT TO"), which includes
+redistribution under different terms. Relicensing the inherited work to BSD 2-Clause is
+therefore within the grant, and no permission from upstream is required. Note the direction
+of travel: BSD is *more* restrictive than WTFPL, adding an attribution requirement and a
+warranty disclaimer that WTFPL has neither of. Nothing downstream loses a right it held.
+
+**Files changed.**
+
+| File | Change |
+| --- | --- |
+| `license.md` | WTFPL text replaced with BSD 2-Clause, plus a third-party components section |
+| `readme.md` | License section rewritten; states BSD 2-Clause and names both carve-outs |
+| `.devdocs/BLUEPRINT.md` §1 | Project licence line updated |
+| `.devdocs/BRIEFING.md` | D-004 note corrected, D-009 recorded |
+
+No source file carries a licence header, so no code changed. `build.zig.zon` has no
+`license` field in the Zig 0.16 manifest schema, so there is nothing to update there.
+
+**Two carve-outs, both stated in `license.md`.**
+1. Bundled dependencies keep their own licences (MIT/BSD). Unchanged by this decision.
+2. `res/setup.sh` keeps its existing notice and is explicitly excluded from the BSD grant.
+
+**Q1 — OPEN: `res/setup.sh` provenance.** The file's header records three copyrights:
+Oswald Buddenhagen (2001-2005, *"extracted from kde-workspace, `kdm/kfrontend/genkdmconf.c`"*),
+Pier Luigi Fiorini (2015-2016), and The Fairy Glade (2024) — and upstream labels the result
+WTFPL. kde-workspace/KDM was GPL-2.0-or-later. That WTFPL label is therefore an upstream
+relicensing decision whose basis cannot be verified from inside this repo, and if it is
+unsound the file would be GPL-derived, which Directive 2 prohibits outright.
+
+**Action taken:** USER elected to leave the file's header untouched rather than compound an
+unverifiable upstream call. `license.md` carves it out explicitly, so the BSD grant does not
+assert terms over code that may not be ours to relicense. This is the conservative position
+and is safe to ship.
+
+**Knock-on fixed.** `res/setup.sh:11` reads *"See license.md for more details"* — a pointer
+that the relicence would have left dangling, since `license.md` no longer contains WTFPL
+terms. Rather than edit the file (which the ruling excluded), the carve-out in `license.md`
+names the WTFPL and links to its canonical text, so the pointer resolves again. The full
+WTFPL was briefly inlined instead and then removed: at ~18 added lines against 24 lines of
+BSD text it would likely have pushed `license.md` below the similarity threshold GitHub's
+`licensee` uses, costing the repo its `BSD-2-Clause` detection and badge. The short note
+keeps detection intact and still answers the reader's question.
+
+**To close Q1**, one of:
+- Confirm the upstream relicensing was authorised by the original authors; or
+- Replace `res/setup.sh` with an original implementation. It is a shell-profile sourcing
+  script (per-shell `profile`/`login` handling plus the X11 `xinitrc.d`/`Xresources` block)
+  — reimplementable from `sh(1)` and `xinit(1)` behaviour without reference to the original;
+  or
+- Accept and document the file as separately licensed under its stated terms, which is the
+  current state.
+
+---
+
+## D-008 — The in-tree version must always lead the newest git tag
+**2026-08-25 — RECORDED, constrains the v1.0.0 release**
+
+`build.zig:getVersionStr` derives the version string reported by `sakura --version` from
+`git describe --match "*.*.*" --tags`, and branches on how many hyphens the result has:
+
+| `git describe` | Meaning | Behaviour |
+| --- | --- | --- |
+| *fails* | no tag reachable | returns `sakura_version` verbatim |
+| `1.0.0` | HEAD **is** the tag | must equal `sakura_version`, else `exit(1)` |
+| `1.0.0-4-gabc1234` | 4 commits past the tag | tagged ancestor must be **strictly less than** `sakura_version`, else `exit(1)` |
+
+The third row is the trap. With `sakura_version = 1.0.0` in `build.zig:22` and a `v1.0.0`
+tag in place, the very next commit produces `1.0.0-1-g…`, whose ancestor `1.0.0` is not
+less than `1.0.0` — so `zig build` calls `std.process.exit(1)` and the tree stops building
+for everyone until the version is bumped. This is inherited upstream behaviour: it encodes
+the convention that the tree version names the *next* release, not the last one.
+
+**Release sequence for v1.0.0:**
+1. Tag the release commit while `sakura_version` still reads `1.0.0` — at that commit
+   `git describe` yields exactly `1.0.0` and the equality branch passes.
+2. Immediately bump `sakura_version` in `build.zig:22` **and** `.version` in
+   `build.zig.zon:3` to `1.0.1` (or `1.1.0`), and commit.
+3. From then on `sakura --version` reports `1.0.1-dev.N+<hash>`, which is the format the
+   bug-report template's placeholder already shows.
+
+Both files must move together; `build.zig.zon` is not read by `getVersionStr`, so a
+mismatch will not fail the build and would silently misreport the package version.
+
+---
+
 ## D-007 — The 13 "orphan" language strings are not orphans; F2 cancelled
 **2026-08-24 09:55 — RESOLVED, no action taken**
 
@@ -86,7 +180,7 @@ headers to files the backlog does not otherwise touch.
 ---
 
 ## D-004 — Project licence (WTFPL) vs Directive 2
-**2026-08-24 08:48 — RESOLVED, no action**
+**2026-08-24 08:48 — RESOLVED, no action · 2026-08-25 — SUPERSEDED IN PART by D-009**
 
 Directive 2 constrains **dependencies** to permissive non-copyleft (MIT/BSD). Sakura's own
 licence is WTFPL (`license.md`), inherited from Ly. WTFPL is permissive and non-copyleft,
@@ -94,10 +188,14 @@ and in any case the directive governs dependencies, not the project's own terms.
 dependencies verified MIT or BSD on 2026-08-24 (BLUEPRINT §3). **Compliant.** No change
 proposed; `readme.md:340` correctly states the fork retains upstream's licence.
 
+**Superseded in part (2026-08-25).** The dependency finding stands unchanged — all ten are
+still MIT or BSD. The premise that the project's own licence is WTFPL does not: it is now
+BSD 2-Clause. See D-009.
+
 ---
 
 ## D-003 — `AGENTS.md` FOSS clause names dependencies this project does not have
-**2026-08-24 08:48 — OPEN, needs USER ruling**
+**2026-08-24 08:48 — RAISED · 2026-08-25 — RESOLVED by USER ruling**
 
 Directive 2 permits `pango` (LGPL-2.1) and `cairo` (LGPL-2.1 / MPL-1.1) *"as required
 graphics/text rendering dependencies per the project's build configuration and README.md"*.
@@ -113,10 +211,17 @@ that is never exercised, and does not license introducing pango/cairo into Sakur
 - Q: Should `AGENTS.md` be amended for this repo? Note it sits at the repo root and is
   **untracked** — see D-002.
 
+**USER ruling (2026-08-25, v1 readiness pass):** drop the exception. Directive 2 now reads
+as an unqualified MIT/BSD-only rule with no LGPL carve-out. All ten dependencies already
+comply (see D-004), so nothing in the tree changes as a consequence — this removes stale
+text authored for a different project, and with it the dangling `README.md` reference (this
+repo's readme is lowercase `readme.md`). Introducing pango or cairo into Sakura now
+requires a fresh directive, not an inherited allowance.
+
 ---
 
 ## D-002 — `AGENTS.md` is untracked and lives in the product root
-**2026-08-24 08:48 — OPEN, needs USER ruling**
+**2026-08-24 08:48 — RAISED · 2026-08-25 — RESOLVED by USER ruling**
 
 `AGENTS.md` is present at the repo root but absent from `git ls-files`, and `.gitignore`
 does not name it. It is therefore untracked-and-unignored: invisible to clones, and liable
@@ -130,6 +235,12 @@ process, planning, and tracking documentation must reside exclusively within
 directive file and moving it would be a self-modifying act taken without approval.
 - Q1: Track it, ignore it, or leave it untracked?
 - Q2: Should `.devdocs/` itself be committed or added to `.gitignore`?
+
+**USER ruling (2026-08-25, v1 readiness pass):** keep both tracked. `AGENTS.md` stays at
+the repo root and `.devdocs/` stays committed, both public. Directive 4's separation of
+concerns is satisfied by `.devdocs/` holding the process documentation; `AGENTS.md` is the
+governing directive file itself and is conventionally root-level, so it is exempt rather
+than in violation. `.coderabbit.yaml` continues to exclude `.devdocs/**` from review.
 
 ---
 

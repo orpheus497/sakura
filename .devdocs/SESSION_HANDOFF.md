@@ -4,6 +4,130 @@ Session-to-session continuity and task persistence. Reverse-chronological — ne
 
 ---
 
+## 2026-08-25 08:24 — Session 002 (continued) — relicence to BSD 2-Clause
+
+**Objective.** USER: *"the license needs to become a BSD license."*
+
+**Decision D-009.** Variant chosen: BSD 2-Clause (SPDX `BSD-2-Clause`) — the FreeBSD
+licence, matching the platform the project exclusively targets. Copyright line
+`Copyright (c) 2026 orpheus497`.
+
+**Basis for the relicence.** Ly is WTFPL, which grants unrestricted permission and so
+permits redistribution under different terms. No upstream consent is required. The change
+moves *toward* restriction (BSD adds attribution and a warranty disclaimer that WTFPL has
+neither of), so nothing downstream loses a right.
+
+**Files modified:** 2 product files — `license.md` (WTFPL text replaced; a third-party
+components section added) and `readme.md` (License section rewritten) — plus three
+`.devdocs/` trackers. No source file carries a licence header, so no code changed.
+`build.zig.zon` has no `license` field in the Zig 0.16 manifest schema.
+
+**Two carve-outs, both stated in `license.md`:** bundled dependencies keep their own MIT/BSD
+licences, and `res/setup.sh` is excluded from the BSD grant.
+
+**Open — D-009 Q1, `res/setup.sh` provenance.** The file is headed *"extracted from
+kde-workspace (kdm/kfrontend/genkdmconf.c)"* with copyrights for Oswald Buddenhagen
+(2001-2005) and Pier Luigi Fiorini (2015-2016), and upstream labels it WTFPL.
+kde-workspace/KDM was GPL-2.0-or-later, so that label rests on an upstream relicensing
+decision this repo cannot verify — and if unsound, the file is GPL-derived, which Directive
+2 prohibits. USER elected to leave the header untouched rather than compound the call;
+`license.md` carves the file out explicitly so the BSD grant claims nothing over code that
+may not be ours to relicense. Conservative and safe to ship. D-009 lists three routes to
+closing it, the most durable being an original reimplementation of what is, in substance, a
+per-shell profile-sourcing script plus an X11 `xinitrc.d`/`Xresources` block.
+
+**One knock-on caught and fixed.** `res/setup.sh:11` says *"See license.md for more
+details"* about its WTFPL grant — a pointer the relicence would have left dangling. The file
+was excluded from editing, so the fix went into `license.md` instead: the carve-out names the
+WTFPL and links its canonical text. An earlier attempt inlined the full WTFPL there and was
+backed out — ~18 extra lines against 24 lines of BSD text would likely drop `license.md`
+below the similarity threshold GitHub's `licensee` uses, losing the `BSD-2-Clause` detection
+and badge for the whole repo. Worth remembering for any future edit to that file: keep
+`license.md` overwhelmingly the licence text itself.
+
+**Verification:** `check_invariants.py` passes. Grep confirms no WTFPL reference survives in
+product files except the three deliberate ones — `license.md`'s explanation of the inherited
+grant, its `res/setup.sh` carve-out, and `res/setup.sh`'s own retained notice.
+
+**Not done, deliberately.** GitHub will now detect and badge the repo as BSD-2-Clause. If
+`contributing.md` should carry a DCO or an inbound-licence clause to match — it currently
+carries neither — that is a separate USER call, already on the next-steps list as item 4.
+
+---
+
+## 2026-08-25 08:11 — Session 002 — v1 branding and documentation readiness pass
+
+**Objective.** USER asked for confirmation that all branding and user-facing documentation
+correctly reflect Sakura rather than the upstream source, and that the project is ready for
+a v1 release.
+
+**Method.** Verified the docs are *accurate*, not merely find-and-replaced. Each load-bearing
+claim was diffed against the source that implements it, rather than read for plausibility:
+
+| Claim | Checked against | Result |
+| --- | --- | --- |
+| Readme install table (14 rows) | `install.zig` | exact match, no drift |
+| Migration section: 19 removed options | `migrator.zig:38-61` | 19/19 documented, none extra |
+| Migration section: 3 renames | `migrator.zig:119,175,183` | correct source and target keys |
+| 16 config options named in the readme | `res/config.ini` + `Config.zig` | all present in both |
+| Build steps and `-D` options | `build.zig:56-200` | match |
+| CLI flags (`-h`, `-v`, `-c`, `--validate-config`) | `main.zig:160-198` | match |
+| "the 25 language files" | `res/lang/*.ini` | 25 |
+| Box-drawing range `U+2500-U+2518` | `TerminalBuffer.zig:167-174` | all six codepoints inside |
+| FreeBSD-only premise | `build.zig:97-103` | guard is real, returns `UnsupportedTarget` |
+| Screenshot | read as an image | genuine Sakura: `sakura` box title, "Sakura version 1.0.0" |
+
+Name-level sweep found no `ly`/`Ly`/`fairyglade` outside four deliberate places: the readme
+Credits and License, the "Migrating from Ly" section, `contributing.md`'s upstream pointer,
+and the upstream copyright headers in `res/setup.sh` (retained — stripping attribution from
+inherited code would be wrong). No Linux-isms remain in user-facing text except the two
+intentional ones explaining why `battery_id` and `login_defs_path` were dropped.
+
+**Accomplishments**
+1. **D-003 resolved per USER ruling** — the pango/cairo LGPL exception removed from
+   `AGENTS.md` Directive 2, which now reads as an unqualified MIT/BSD-only rule. The clause
+   was authored for a different project: Sakura has no graphics toolkit, and the
+   `README.md` it referenced does not exist here (this repo's readme is lowercase). No
+   dependency changes follow — all ten already comply per D-004. The obsolete NOTE in
+   BLUEPRINT §3 was removed with it.
+2. **D-002 resolved per USER ruling** — `AGENTS.md` stays at the repo root and `.devdocs/`
+   stays committed, both public. Directive 4 is satisfied by `.devdocs/` holding the
+   process documentation; the governing directive file itself is exempt, not in violation.
+3. **D-008 recorded** — a release-mechanics constraint found in `build.zig:getVersionStr`
+   that gates the v1.0.0 tag. See below.
+4. **Trackers updated** — BRIEFING blockers reduced to D-005 alone, next-steps table
+   re-cut with the tagging step added.
+
+**Independently re-derived D-007.** A static scan flagged the same 13 `Lang` keys as
+unreferenced. Following the method note left in D-007, the `inline for` over
+`@typeInfo(Lang)` at `main.zig:1223-1224` was checked first and confirms every key is
+reachable through `$<key>` substitution in custom keybinds. `err_sleep` and `err_hibernate`
+in particular are *load-bearing*: `migrator.zig` folds Ly's `sleep_key`/`hibernate_key` into
+custom binds that use them. No action taken; D-007 stands and its method note works.
+
+**The one release gate — D-008.** `getVersionStr` calls `std.process.exit(1)` when
+`git describe` finds a tagged ancestor that is not strictly older than the in-tree
+`sakura_version`. With `sakura_version = 1.0.0` and a `v1.0.0` tag, the *next* commit
+breaks `zig build` for everyone. Tag at the release commit (the equality branch passes),
+then immediately bump `build.zig:22` **and** `build.zig.zon:3` to 1.0.1. Both files must
+move together — `build.zig.zon` is not read by `getVersionStr`, so a mismatch fails
+silently rather than loudly. USER elected to cut the tag themselves.
+
+**Files modified:** 1 product file — `AGENTS.md` — plus three `.devdocs/` trackers
+(`DECISIONS_LOG.md`, `BRIEFING.md`, `BLUEPRINT.md`). No source, config, resource or
+user-facing documentation file needed a change: the branding and the readme were already
+correct.
+
+**Verification:** `check_invariants.py` passes all four invariant families (94/94 config
+keys, 82/82 lang keys × 25 locales, 25/25 installed language files, 18/18 wallpaper
+glyphs). `zig build` was not run — this session's host is Linux and the build correctly
+refuses non-FreeBSD targets; no code was touched.
+
+**Next session.** Rule on D-005. Cut the v1.0.0 tag per D-008. Confirm the CI workflow
+actually executes on GitHub — it has still never run, only been validated locally.
+
+---
+
 ## 2026-08-24 10:17 — Session 001 (continued) — review pass
 
 **Objective.** Act on a set of review findings against the committed work.

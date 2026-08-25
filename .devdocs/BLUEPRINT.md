@@ -13,8 +13,9 @@ fork's two defining departures from upstream are:
 2. **Animated GIF wallpaper.** The default `animation` is `gif`, rendered onto the vt(4)
    console with quadrant and shade glyphs.
 
-Project licence: WTFPL (`license.md`). See DECISIONS_LOG entry D-004 regarding the
-interaction between this and Directive 2.
+Project licence: BSD 2-Clause (`license.md`), relicensed from the inherited WTFPL on
+2026-08-25 — see DECISIONS_LOG entry D-009. `res/setup.sh` is carved out and keeps its own
+notice; bundled dependencies keep theirs (§3).
 
 ## 2. Module Topology
 
@@ -45,10 +46,6 @@ proprietary.**
 | `aro` (Veikka Tuominen) | MIT | Transitive, under translate_c |
 | OpenPAM | BSD | Authentication (FreeBSD base) |
 | libxcb | MIT | X11 support (optional, `-Denable_x11_support`) |
-
-> NOTE: The FOSS clause in `AGENTS.md` names `pango` and `cairo` as permitted LGPL
-> exceptions "per the project's build configuration and README.md". Sakura uses neither
-> and has no graphics-toolkit dependency at all. See DECISIONS_LOG D-003.
 
 ## 4. FreeBSD Platform Interfaces
 

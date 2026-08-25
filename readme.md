@@ -420,4 +420,9 @@ default wallpaper `pixel_sakura.gif` comes directly from there.
 
 ## License
 
-Sakura, like Ly, is released under the WTFPL. See `license.md`.
+Sakura is released under the BSD 2-Clause License. See `license.md`.
+
+Ly is released under the WTFPL, which permits redistribution under any terms,
+so the inherited work is re-released here under BSD 2-Clause. Two exceptions
+are noted in `license.md`: `res/setup.sh` keeps its own notice, and the bundled
+dependencies keep their own licenses (MIT and BSD).
