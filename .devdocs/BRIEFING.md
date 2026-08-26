@@ -1,12 +1,34 @@
 # BRIEFING — Sakura
 
-Current project status and phase. Last updated: 2026-08-25.
+Current project status and phase. Last updated: 2026-08-27 07:52.
 
 ---
 
 ## Current Phase
 
-**Phase 4 — Session End. All four stages complete and verified.**
+**Phase 4 — Session End. Session 003 (ecosystem branding) complete.**
+
+The 2026-08-27 session established the framing the documentation had never carried: Sakura
+is the **login layer of the Sakura desktop**, a three-component Wayland desktop environment
+for FreeBSD, alongside `hikari-sakura` (compositor) and `Sofi` (shell). The naming is a
+lineage rooted here — hikari-sakura takes its second name from this display manager, Sofi
+its leading S. Recorded as **D-010**; architecture in BLUEPRINT §1.1.
+
+Before this pass, `hikari` and `sofi` appeared nowhere in the repository. `readme.md` now
+leads with the desktop, carries a §*The Sakura desktop* (component table, naming lineage,
+runtime hand-off) and a §*Running hikari-sakura* under Sessions, and credits both siblings'
+ancestry and licences. Every integration claim was verified against the sibling working
+copies at `/home/orpheus497/Projects/{hikari-sakura,sofi}` — evidence table in D-010.
+
+Scope was `readme.md` only, by USER ruling. `contributing.md`, the `.github/` templates and
+`res/` were offered and declined; they are parked in PLANS.md as a pending item, with issue
+routing flagged as the one that will matter first. No code changed.
+
+---
+
+## Prior Phase — remediation
+
+**All four stages complete and verified.**
 
 20 of 21 defects fixed; 1 (F2) cancelled on verification as an invalid finding. Tree
 state: `zig build` OK · `zig build test` OK · `--validate-config` clean · all invariants
@@ -37,13 +59,22 @@ options are measured from the top/left rather than the bottom/end.
 
 Sakura is a FreeBSD-only TUI display manager, forked from Ly and rebranded in commit
 `f38fae8`. The fork's two defining changes are the platform narrowing and the animated GIF
-wallpaper. See BLUEPRINT.md for architecture.
+wallpaper. It is also the login layer of the three-component **Sakura desktop** — see
+BLUEPRINT §1.1 for the ecosystem position and the integration contract, and §2 onward for
+internal architecture.
+
+**One structural coupling to guard (BLUEPRINT §1.1).** hikari-sakura's session entry is
+discovered purely by convention: it installs `hikari.desktop` into
+`${PREFIX}/share/wayland-sessions`, which is Sakura's default `waylandsessions`. No Sakura
+source file contains the string "hikari". Changing that default, or the desktop-entry
+crawler, removes the compositor from the session list **silently**.
 
 **Documentation health after remediation: all audited defects closed.**
 
 | Area | State |
 | --- | --- |
 | Name-level rebrand | Clean — 0 defects |
+| Ecosystem branding | Documented in `readme.md` (D-010); three surfaces deferred to PLANS |
 | Config ↔ code parity | Clean — 94/94 keys and values, `start_cmd` the one documented override |
 | Lang ↔ code parity | Clean — 82/82 across all 25 locales |
 | Readme factual claims | Verified against `build.zig`, `install.zig`, `interop.zig`, `main.zig` |
@@ -87,6 +118,11 @@ file is carved out of the BSD relicence pending a provenance check.
 
 ## Recent Architectural Decisions
 
+- **D-010** — Sakura documented as the login layer of the Sakura desktop (Sakura ·
+  hikari-sakura · Sofi), with the naming lineage recorded. Integration is by freedesktop
+  convention only; independence from both siblings is stated explicitly in the readme so the
+  framing does not read as a new dependency. One question open (Q1): the lineage is
+  documented in one direction only, as neither sibling repository mentions Sakura.
 - **D-001** — Post-rebrand audit complete. Two structural insights recorded: `install.zig`
   substitutes prefix tokens inside *comments* as well as values (root cause of B2, and a
   standing hazard for any future prefix change); and the wallpaper glyph set is duplicated
@@ -106,17 +142,19 @@ file is carved out of the BSD relicence pending a provenance check.
 
 | # | Step | Est. | Gate |
 | --- | --- | --- | --- |
-| 1 | Rule on D-005, the one remaining governance question | 10 min, USER | — |
-| 2 | Review and commit the working-tree changes from the 10:17 review pass and the 2026-08-25 v1 pass | 10 min | — |
-| 3 | Confirm the CI workflow actually runs on GitHub — it has never executed, only been validated locally | 15 min | push |
-| 4 | Decide whether `contributing.md` should carry an AI-usage policy; it deliberately carries none | 10 min, USER | — |
+| 1 | Review and commit the working tree: `readme.md` from this pass, plus the still-uncommitted 10:17 review and 2026-08-25 v1 changes | 15 min | — |
+| 2 | Rule on D-005, the one remaining governance question | 10 min, USER | — |
+| 3 | Add issue routing to `.github/ISSUE_TEMPLATE/*.yml` — PLANS item 1, the declined surface that matters first once the desktop has users | 15 min | — |
+| 4 | Confirm the CI workflow actually runs on GitHub — it has never executed, only been validated locally | 15 min | push |
 | 5 | Tag `v1.0.0`, then bump `sakura_version` and `build.zig.zon` to 1.0.1 per D-008 | 10 min | tag |
-| 6 | Optional: extend `check_invariants.py` to the cell-geometry invariant recorded in BLUEPRINT §6 | 30 min | — |
+| 6 | Cross-repo reciprocity (D-010 Q1) — link back to Sakura from hikari-sakura and Sofi; batch with v1.0.0 coordination | 20 min | other repos |
+| 7 | Optional: extend `check_invariants.py` to the cell-geometry invariant recorded in BLUEPRINT §6 | 30 min | — |
 
 ---
 
 ## Awaiting
 
-A ruling on D-005, and a review of the uncommitted changes. Nothing is blocked on either;
-the remediation itself is complete and verified. The v1.0.0 tag is the USER's to cut — see
-D-008 for the two-step sequence it requires.
+A ruling on D-005, and a review of the uncommitted changes — which now include this
+session's `readme.md` rewrite alongside the earlier unreviewed passes. Nothing is blocked on
+either. The v1.0.0 tag is the USER's to cut; see D-008 for the two-step sequence it
+requires, and D-010 Q1 for the cross-repository linking worth doing in the same window.

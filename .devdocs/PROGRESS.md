@@ -5,6 +5,44 @@ Most recent at top.
 
 ---
 
+## 2026-08-27 07:52 — Ecosystem branding landed in the readme (D-010)
+
+USER: *"the predominant focus of this session is to ensure the branding the documentation
+(readme and user facing) is all completely detailed and comprehensive"* — Sakura,
+hikari-sakura and Sofi are three components of one FreeBSD Wayland desktop, and the naming
+of the other two derives from this one.
+
+**Starting state: the framing was entirely absent.** A grep for `hikari|sofi|layer.?shell`
+across all product docs returned nothing — the only `wayland` hits were the generic session
+plumbing (`res/config.ini`, `res/lang/*.ini`, `src/`). Sakura was documented purely as a
+standalone Ly fork. Meanwhile sofi's readme cross-links hikari-sakura throughout, and
+hikari-sakura's default `hikari.conf` already binds four `sofi` actions, so the ecosystem
+was real in the code and invisible in this repository's documentation.
+
+**Delivered — `readme.md`, four changes:**
+
+| Change | Detail |
+| --- | --- |
+| Opening rewritten | Leads with Sakura as the desktop's login layer, then states plainly that it depends on neither sibling and launches any session another login manager would |
+| New §*The Sakura desktop* | Component table (layer/role/licence), why the split falls on process and privilege boundaries, §*Where the names come from*, and a six-step runtime hand-off from `init(8)` to logout |
+| New §*Running hikari-sakura* | Under Sessions: zero-config discovery, why `start-hikari` and not `hikari`, the two FreeBSD Wayland prerequisites, where Sofi's daemons go, and why `x_vt` does not apply |
+| Credits + License extended | Sibling ancestry (`raichoo`; rofi/simpleswitcher) and the three licences, noting all are permissive so the desktop redistributes as a whole |
+
+**Every integration claim was verified against the sibling working copies**, not asserted —
+the evidence table is in DECISIONS_LOG D-010. The two most useful additions are negative
+claims, because both are mistakes a reader would otherwise make: Sofi's daemons must *not*
+go in Sakura's `setup.sh` (it runs before the compositor exists), and `x_vt` does *not*
+apply to a Wayland compositor.
+
+**Scope.** USER selected `readme.md` only. `contributing.md`, the `.github/` issue
+templates and `res/` were offered and declined; they are parked in PLANS.md rather than
+dropped. No code changed, so no build verification was required.
+
+**Left open.** The lineage is documented in one direction only — neither sibling repository
+mentions Sakura. Recorded as D-010 Q1.
+
+---
+
 ## 2026-08-24 10:00 — Verified against Hurmit, the font the readme documents
 
 USER pointed out Hurmit Nerd Font is installed and that this host is a linuxulator — which

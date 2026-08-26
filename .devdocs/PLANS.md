@@ -1,10 +1,58 @@
 # PLANS
 
 Forward-looking strategy for items scoped out of DECISIONS_LOG that are not yet
-implemented. Last updated: 2026-08-24 10:17.
+implemented. Last updated: 2026-08-27 07:52.
 
-**Nothing is currently pending.** The one plan below has been fully executed; it is kept
-as a historical record of the reasoning, not as outstanding work.
+**One item pending** — the ecosystem-branding surfaces declined for the 2026-08-27 pass.
+The archived plan below has been fully executed and is kept as a historical record of the
+reasoning, not as outstanding work.
+
+---
+
+## PENDING — Ecosystem branding, the three declined surfaces (D-010)
+
+The 2026-08-27 pass landed the ecosystem framing in `readme.md` only, by USER scope
+ruling. Three surfaces were offered and declined. None is urgent while the desktop has no
+users; the first becomes actively useful the moment it does.
+
+### 1. `.github/ISSUE_TEMPLATE/bug.yml` and `feature.yml` — issue routing *(highest value)*
+
+Neither template says anything about the desktop, so a hikari-sakura crash or a Sofi menu
+bug has no signpost pointing elsewhere and will be filed here. `bug.yml` already asks for
+"Desktop environment/Window manager", which is precisely where a user running the Sakura
+desktop will type "Hikari Sakura" — into this repository's tracker.
+
+Proposed: a `type: markdown` block above the prerequisites naming the three trackers and
+what belongs in each, and a prerequisite checkbox confirming the problem reproduces at the
+login screen rather than inside the session. Cost: ~15 min. Risk: none.
+
+### 2. `contributing.md` — which repository owns which change
+
+The file scopes contributions against Ly (send FreeBSD-neutral fixes upstream too) but says
+nothing about the sibling repositories. The boundary is clean and worth stating: anything
+before authentication is Sakura's; anything about window management is hikari-sakura's;
+anything drawn by a layer-shell surface is Sofi's. The one genuinely ambiguous case is
+session hand-off, which is Sakura's up to `exec` and the compositor's after it.
+
+Also worth adding to *Things that must stay in step*: the `waylandsessions` default path is
+load-bearing for compositor discovery (BLUEPRINT §1.1) — changing it silently removes the
+Hikari Sakura entry from the session list. Cost: ~20 min.
+
+### 3. `res/config.ini` and `res/custom-sessions/README` — in-file branding
+
+Lowest value and highest caution. `res/config.ini` is checked key-for-key against
+`src/config/Config.zig` by `tools/check_invariants.py`, and it is the shipped file as well
+as the documentation, so any edit must stay comment-only. A sentence at
+`waylandsessions` noting that hikari-sakura installs its entry into the default path would
+be genuinely useful; a general branding banner would not. `custom-sessions/README` needs
+nothing — custom entries are orthogonal to the desktop. Cost: ~10 min.
+
+### 4. Cross-repository reciprocity — D-010 Q1, *not* in this repository
+
+hikari-sakura's readme names "GDM, SDDM, greetd" and never Sakura; sofi's readme never
+mentions it. A reader arriving at either has no path back to the project they are named
+after. This needs commits in two other repositories and should be batched with whatever
+cross-repo coordination the v1.0.0 tag requires.
 
 ---
 

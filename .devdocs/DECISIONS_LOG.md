@@ -5,6 +5,67 @@ TODOs scoped into detail. Most recent at top.
 
 ---
 
+## D-010 — Sakura is documented as the login layer of the Sakura desktop
+**2026-08-27 — RESOLVED by USER instruction**
+
+USER established the framing that the readme had never carried: Sakura is not only a
+standalone Ly fork but the first of **three components of one Wayland desktop environment
+targeting FreeBSD**, and the naming of the other two is a lineage rooted in this
+repository.
+
+| Component | Repository | Layer | Licence |
+| --- | --- | --- | --- |
+| Sakura | `orpheus497/sakura` | Login — TUI display manager on `vt(4)`, OpenPAM | BSD 2-Clause |
+| hikari-sakura | `orpheus497/hikari-sakura` | Compositor — stacking Wayland + tiling, wlroots 0.20 | BSD 2-Clause |
+| Sofi | `orpheus497/sofi` | Shell — `zwlr_layer_shell_v1` surfaces, one binary | MIT/X11 |
+
+**The naming lineage, as stated by USER.** Sakura was named first. hikari-sakura takes
+*hikari* from the compositor it forks (`antaz/hikari`, originally `raichoo`, abandoned
+upstream) and *sakura* from this display manager — the second half of the name is what
+marks it as part of this desktop. Sofi is a hard fork of rofi and swaps rofi's leading
+**r** for the **S** of Sakura. Each name therefore keeps what it came from and carries
+Sakura's mark for what it became part of.
+
+**Verification.** Every integration claim added to `readme.md` was checked against the
+sibling working copies at `/home/orpheus497/Projects/{hikari-sakura,sofi}` rather than
+asserted:
+
+| Claim | Verified against |
+| --- | --- |
+| `hikari.desktop` lands in Sakura's default `waylandsessions` path | `hikari-sakura/share/wayland-sessions/hikari.desktop` (`Name=Hikari Sakura`, `Exec=start-hikari`) vs `res/config.ini:451` (`$PREFIX_DIRECTORY/share/wayland-sessions`) |
+| `start-hikari` is the correct entry point, not `hikari` | `hikari-sakura/start-hikari.sh` — creates/validates `XDG_RUNTIME_DIR`, clears leaked `WAYLAND_DISPLAY`/`DISPLAY`, wraps in `dbus-run-session` |
+| Sofi's daemons belong in hikari's autostart, not Sakura's `setup.sh` | `hikari-sakura/share/man/man1/hikari.1:195` (`~/.config/hikari/autostart`); `sofi/README.md` §Autostart |
+| Sofi's on-demand surfaces need no autostart | `hikari-sakura/etc/hikari/hikari.conf:449-452` already binds `sofi -show drun/window/sheets/notification-history` |
+| Licences of both siblings | `hikari-sakura/LICENSE` (BSD 2-Clause + raichoo upstream notice), `sofi/COPYING` (MIT/X11 + rofi + simpleswitcher) |
+| FreeBSD Wayland prerequisites | `hikari-sakura/README.md` — `kern.evdev.rcpt_mask`, `XDG_RUNTIME_DIR` must not be on ZFS |
+
+**Two claims deliberately made negative**, because both are plausible mistakes a reader
+would otherwise make:
+
+1. **`setup.sh` is the wrong place for Sofi's daemons.** It runs before the compositor
+   exists, so a layer-shell client started there has nothing to bind to.
+2. **`x_vt` does not apply to hikari-sakura.** That option exists because Xorg and the
+   console fight over a shared virtual terminal; a Wayland compositor takes the terminal
+   cleanly.
+
+**Independence is stated explicitly.** The readme says in the opening that Sakura depends
+on neither sibling and launches any session another login manager would. The desktop is an
+option, not a requirement — this keeps the ecosystem framing from reading as a new
+dependency.
+
+**Files changed.** `readme.md` only, per USER's scope ruling: opening rewritten to lead
+with the desktop, new §*The Sakura desktop* (component table, naming lineage, six-step
+runtime hand-off), new §*Running hikari-sakura* under Sessions, and Credits/License
+extended with sibling provenance. `contributing.md`, the `.github/` templates and `res/`
+were offered and **declined** for this pass — see PLANS.md.
+
+**Q1 — OPEN: reciprocal cross-linking.** hikari-sakura's readme names generic display
+managers ("GDM, SDDM, greetd") and does not mention Sakura; sofi's readme cross-links
+hikari-sakura throughout but never Sakura. The lineage is therefore documented in one
+direction only. Fixing it means editing two other repositories and is out of scope here.
+
+---
+
 ## D-009 — Relicensed from WTFPL to BSD 2-Clause
 **2026-08-25 — RESOLVED by USER instruction; one sub-question left open**
 
