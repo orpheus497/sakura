@@ -1,6 +1,6 @@
 # BLUEPRINT — Sakura System Architecture
 
-Last updated: 2026-08-24 10:17
+Last updated: 2026-08-27 07:52
 
 ## 1. Product Identity
 
@@ -16,6 +16,40 @@ fork's two defining departures from upstream are:
 Project licence: BSD 2-Clause (`license.md`), relicensed from the inherited WTFPL on
 2026-08-25 — see DECISIONS_LOG entry D-009. `res/setup.sh` is carved out and keeps its own
 notice; bundled dependencies keep theirs (§3).
+
+### 1.1 Ecosystem Position (D-010)
+
+Sakura is the **login layer of the Sakura desktop**, a three-component Wayland desktop
+environment for FreeBSD. The other two are separate repositories with separate build
+systems and licences; this repository has **no build-time or run-time dependency on
+either**, and the coupling is entirely by freedesktop convention.
+
+| Component | Repository | Layer | Build | Licence |
+| --- | --- | --- | --- | --- |
+| **Sakura** (here) | `orpheus497/sakura` | Login / session launch, on `vt(4)` | Zig 0.16 | BSD 2-Clause |
+| **hikari-sakura** | `orpheus497/hikari-sakura` | Wayland compositor, wlroots 0.20 | `make` | BSD 2-Clause |
+| **Sofi** | `orpheus497/sofi` | Layer-shell surfaces, one binary | Meson | MIT/X11 |
+
+**Naming lineage.** Sakura was named first. hikari-sakura = *hikari* (the forked
+compositor, `antaz/hikari` by `raichoo`) + *sakura* (this project). Sofi = the **S** of
+Sakura substituted for rofi's leading **r**.
+
+**Integration contract — the four points of contact, all conventional:**
+
+1. **Session discovery.** hikari-sakura installs `hikari.desktop` to
+   `${PREFIX}/share/wayland-sessions`, which is Sakura's default `waylandsessions`
+   (`res/config.ini`). Sakura's existing desktop-entry crawler (`src/main.zig`, `crawl`)
+   finds it with no special-casing. **No Sakura code knows the name "hikari".**
+2. **Session launch.** The entry's `Exec=start-hikari` — the wrapper, never the `hikari`
+   binary, because the wrapper establishes `XDG_RUNTIME_DIR` and the D-Bus session.
+3. **Environment.** Sakura's `setup_cmd` (`res/setup.sh`) runs *before* the compositor
+   exists. Layer-shell clients (Sofi) therefore belong in hikari-sakura's own
+   `~/.config/hikari/autostart`, not here.
+4. **Return.** Session exit returns control to Sakura on the same virtual terminal.
+
+**Invariant.** Any change to the default `waylandsessions` path, or to desktop-entry
+crawling, breaks discovery of the compositor session silently — the entry simply stops
+appearing in the list. This is the only structural coupling worth guarding.
 
 ## 2. Module Topology
 

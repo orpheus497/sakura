@@ -4,6 +4,73 @@ Session-to-session continuity and task persistence. Reverse-chronological — ne
 
 ---
 
+## 2026-08-27 07:52 — Session 003 — ecosystem branding in the readme
+
+**Objective.** USER: *"the predominant focus of this session is to ensure the branding the
+documentation (readme and user facing) is all completely detailed and comprehensive"*, with
+the framing that Sakura, hikari-sakura and Sofi are three components of a complete Wayland
+desktop user environment specifically targeting FreeBSD — and that hikari-sakura takes the
+second half of its name from this display manager, while Sofi inherits its S from it.
+
+**What was missing.** The framing was absent from every product document. `hikari` and
+`sofi` appeared nowhere in the repository; Sakura was documented solely as a
+platform-narrowed Ly fork. The asymmetry was notable: sofi's readme cross-links
+hikari-sakura throughout and hikari-sakura's shipped `hikari.conf` binds four `sofi`
+actions, so the desktop was already wired in code while this repository — the one the whole
+thing is named after — said nothing about it.
+
+**Approach — verified, not asserted.** Both siblings are checked out at
+`/home/orpheus497/Projects/{hikari-sakura,sofi}`, so every factual claim added to the readme
+was read out of their sources: the `.desktop` file's `Exec` line and install path, the
+`start-hikari` wrapper's actual responsibilities, the autostart path from `hikari.1`, the
+`sofi` action bindings in the default config, and both licence files. The evidence table is
+in DECISIONS_LOG D-010. Nothing about the siblings was written from memory.
+
+**Files modified: 1 product file + 5 trackers.**
+
+| File | Change |
+| --- | --- |
+| `readme.md` | Opening rewritten to lead with the desktop; new §*The Sakura desktop*; new §*Running hikari-sakura* under Sessions; Credits and License extended with sibling provenance |
+| `.devdocs/DECISIONS_LOG.md` | D-010 recorded with the full verification table and one open question |
+| `.devdocs/BLUEPRINT.md` | New §1.1 *Ecosystem Position* — component table, naming lineage, the four points of contact, and the discovery invariant |
+| `.devdocs/PROGRESS.md` | Entry recording what landed |
+| `.devdocs/PLANS.md` | The three declined surfaces parked as a forward item |
+| `.devdocs/BRIEFING.md` | Phase and status refreshed |
+
+**Two decisions worth carrying forward.**
+
+1. **Independence is stated in the opening, immediately after the ecosystem framing.**
+   Without it the section reads as though Sakura had acquired a dependency on a compositor
+   and a shell. It has not: the coupling is one `.desktop` file in a conventional
+   directory, and no Sakura source file contains the string "hikari". BLUEPRINT §1.1
+   records this as the integration contract.
+
+2. **The most valuable content in §*Running hikari-sakura* is the two negative claims.**
+   Sofi's daemons must not go in Sakura's `setup.sh` — that script runs before the
+   compositor exists, so a layer-shell client started there has nothing to bind to — and
+   `x_vt` does not apply, because it exists for Xorg fighting the console over a shared
+   virtual terminal and a Wayland compositor takes the terminal cleanly. Both are errors a
+   reader would plausibly make, and neither is discoverable from the other repositories.
+
+**Scope was narrowed by USER, deliberately.** `contributing.md` (which repo owns which
+change), the `.github/` issue templates (routing compositor and shell bugs away from this
+tracker), and `res/config.ini` + `res/custom-sessions/README` were all offered and
+declined. They are in PLANS.md, not dropped — the issue-template routing in particular will
+matter as soon as the desktop has users, since a compositor crash will otherwise be filed
+here.
+
+**Open — D-010 Q1, one-directional lineage.** hikari-sakura's readme names generic display
+managers ("GDM, SDDM, greetd") and never Sakura; sofi's readme never mentions it either. A
+reader arriving at either sibling has no path back to the project they are named after.
+Fixing it means edits in two other repositories — out of scope for this session, and worth
+doing in the same pass as whatever cross-repo release coordination v1.0.0 needs.
+
+**No code changed**, so no build verification was required. `readme.md` was checked for
+heading structure, anchor targets (`#the-sakura-desktop`, `#running-hikari-sakura`) and
+line width; the only lines over 80 characters are the three that already were.
+
+---
+
 ## 2026-08-25 08:24 — Session 002 (continued) — relicence to BSD 2-Clause
 
 **Objective.** USER: *"the license needs to become a BSD license."*
