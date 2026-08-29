@@ -137,17 +137,17 @@ and, if you intend to run X11 sessions:
 
 ## Building
 
-```
-$ git clone https://github.com/orpheus497/sakura.git sakura
-$ cd sakura
-$ zig build
+```sh
+git clone https://github.com/orpheus497/sakura.git sakura
+cd sakura
+zig build
 ```
 
 After building, you can (optionally) test Sakura in a terminal emulator,
 although authentication will **not** work:
 
-```
-$ zig build run
+```sh
+zig build run
 ```
 
 > [!IMPORTANT]
@@ -161,7 +161,7 @@ $ zig build run
 
 ## Installing
 
-```
+```sh
 # zig build installexe
 ```
 
@@ -187,7 +187,7 @@ This installs:
 The defaults follow the FreeBSD ports layout (`--prefix` is `/usr/local` and
 the configuration lives under `/usr/local/etc`). Both can be overridden:
 
-```
+```sh
 # zig build installexe -Dprefix_directory=/usr/local -Dconfig_directory=/usr/local/etc
 ```
 
@@ -226,7 +226,7 @@ still tells you about them. Copy it into a ports tree (as `x11/sakura`), run
 If another display manager is currently enabled, disable it first. For example,
 for LightDM:
 
-```
+```sh
 # service lightdm stop
 # sysrc lightdm_enable="NO"
 ```
@@ -240,7 +240,7 @@ already filled in with the paths you built with.
 
 First, append the Sakura entry to `/etc/gettytab` (see `gettytab(5)`):
 
-```
+```text
 sakura:\
 	:lo=/usr/local/bin/sakura_wrapper:\
 	:al=root:
@@ -258,13 +258,13 @@ Then point a virtual terminal at that entry in `/etc/ttys` (see `ttys(5)`).
 FreeBSD numbers virtual terminals from 1 but names their device nodes from 0,
 so virtual terminal 2 — Sakura's default — is `/dev/ttyv1`:
 
-```
+```text
 ttyv1	"/usr/libexec/getty sakura"	xterm	onifexists	secure
 ```
 
 Finally, make `init(8)` re-read the file:
 
-```
+```sh
 # kill -HUP 1
 ```
 
@@ -276,13 +276,13 @@ line instead.
 
 You can install Sakura without overriding the current configuration file:
 
-```
+```sh
 # zig build installnoconf
 ```
 
 ## Uninstalling
 
-```
+```sh
 # zig build uninstallexe
 ```
 
@@ -299,8 +299,8 @@ except where a comment says otherwise. A pristine copy is kept next to it as
 You can check the validity of your configuration file (i.e. whether there are
 any errors in it) with:
 
-```
-$ sakura --validate-config /usr/local/etc/sakura/config.ini
+```sh
+sakura --validate-config /usr/local/etc/sakura/config.ini
 ```
 
 Logs are defined by that same file:
@@ -630,7 +630,7 @@ gives 120x37 cells, 12x24 gives 160x50, and 8x16 gives 240x75 — each step
 roughly doubling the resolution at the cost of smaller text. The shipped
 defaults are tuned for 12x24:
 
-```
+```sh
 # sysrc allscreens_flags="-f /usr/share/vt/fonts/spleen-12x24.fnt"
 ```
 
@@ -667,7 +667,7 @@ synthesised at the exact cell size instead.
 
 It needs `python3` and `otf2bdf`; `vtfontcvt` is in the base system.
 
-```
+```sh
 $ python3 tools/mkvtfont.py -p 11 -o sakura-console.fnt \
     /usr/local/share/fonts/nerd-fonts/Hurmit/HurmitNerdFontMono-Regular.otf
 # cp sakura-console.fnt /usr/share/vt/fonts/
@@ -675,7 +675,7 @@ $ python3 tools/mkvtfont.py -p 11 -o sakura-console.fnt \
 
 Load it for the current session, or for every terminal at boot:
 
-```
+```sh
 # vidcontrol -f /usr/share/vt/fonts/sakura-console.fnt < /dev/ttyv1
 # sysrc allscreens_flags="-f /usr/share/vt/fonts/sakura-console.fnt"
 ```
@@ -817,7 +817,7 @@ page:
 
 A typical shebang for a shell script looks like this:
 
-```
+```sh
 #!/bin/sh
 ```
 
