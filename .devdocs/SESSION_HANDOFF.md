@@ -4,6 +4,197 @@ Session-to-session continuity and task persistence. Reverse-chronological — ne
 
 ---
 
+## 2026-08-29 09:39 — Session 005 (continued) — v1 plan executed (D-013)
+
+**Objective.** USER: *"proceed - i want this to be a normal pkg not something
+complicated"*. All four parts of the v1 readiness plan, in one pass.
+
+**Outcome: 23 of 23 backlog items closed. The active list is empty.**
+
+### The ruling
+
+A normal port fetches distfiles, so **`vendor.tar.zst` is not tracked** — reversing
+D-011 #3. `USES=zig` + `ZIG_TUPLE` is the framework's own mechanism for this and needed no
+invention; `zig.mk` was read in full and `devel/zls` used as the reference.
+
+### Two places reality corrected the plan
+
+1. **`.paths` ignores `.gitignore`.** Adding `sakura-ui`/`sakura-core` as directories, as
+   PLANS said, put **1037 files** in the package — `.zig-cache/` and the vendored
+   `zig-pkg/` trees included. Naming the source subpaths gives **89 files, zero leakage**.
+   BLUEPRINT §9.1 now states the correct form; this will recur with any future path
+   dependency.
+
+2. **`install.zig:117` hardcodes `zig-out/bin/sakura`.** `USES=zig` passes
+   `--prefix ${PREFIX}`, which would write outside the stage dir *and* break that read.
+   The port defines its own `do-install` omitting `--prefix`. Commented in the Makefile,
+   because it looks exactly like something a later edit would tidy away.
+
+### Worth carrying forward
+
+**V14 — the wallpaper needs no font build.** Every stock vt font already carries all 18
+glyphs. The readme had presented a Python font toolchain as setup for a feature that works
+out of the box. That was the single largest overstatement of adoption cost in the project,
+and it is now the first thing the Console font section says.
+
+**Dependencies must be read from `zig-pkg/`, not from the manifests.** LuaJIT and a second
+`translate_c` (0.0.0, zlua's own) appear in no manifest a packager would think to check.
+
+### State on handoff
+
+Working tree: 8 modified product files, 4 new files under `ports/`, 7 modified trackers.
+**Nothing committed** — review and commit is USER's call.
+
+Verified: `check_invariants.py` all four families · `zig fetch` 89 files with both path
+deps · option coverage 94/94 (75 verbatim, 19 prefix rows, 0 uncovered).
+
+**Not verified: the build.** `zig build` needs FreeBSD base headers the linuxulator does
+not supply (BLUEPRINT §0). The port needs one build test on a native FreeBSD userland.
+
+### Next session starts here
+
+1. Build-test `ports/` on a native FreeBSD userland; confirm the staged tree matches
+   `pkg-plist` entry for entry.
+2. `distinfo` via `make makesum` — needs the `v1.0.0` tag to exist first (out of scope
+   per D-011 #7, so this is a USER decision, not a task).
+3. Optional, from PLANS: issue-template routing in `.github/ISSUE_TEMPLATE/*.yml`.
+
+---
+
+## 2026-08-29 09:21 — Session 005 — every open question closed (D-012)
+
+**Objective.** USER reacted to a session briefing that re-asked six questions they had
+already answered: *"why does this keep coming up, I answer it every fucking time"* …
+*"we need to resolve them before anything, I'm sick of them coming up every session"*.
+
+**Outcome: zero open questions in this repository.** Seven `.devdocs/` files updated. No
+product file touched.
+
+### The cause was a documentation convention, not the answers
+
+Four of the six had been answered in the very entry that also labelled them `OPEN`. D-009 Q1
+recorded the disposition (*"USER elected to leave the file's header untouched"*) and then
+titled itself *OPEN*. D-005 asked for a ruling on something `AGENTS.md` already states
+outright. Each session read `OPEN`, re-asked, and the briefing reprinted them under
+*Current Blockers*, closing the loop.
+
+**The fix is structural, in D-012 and at the head of BRIEFING.md:** an answered question is
+rewritten *as its answer*, marked `CLOSED` with date and basis, and carries *"Do not
+re-table."* A question already answered by `AGENTS.md` is not a question. Nothing about
+another repository is ever an open item here.
+
+### The host has been FreeBSD the whole time
+
+`uname -s` → `Linux`; `uname -a` → `FreeBSD 15.1-RELEASE`. The linuxulator. Recorded once
+at PROGRESS 2026-08-24 10:00, then lost, after which two items were parked as "needs a
+FreeBSD box" while sitting on a FreeBSD box. Now permanent as **BLUEPRINT §0**, with the
+one genuine limit stated: only `zig build` is blocked, because it needs base-system headers
+the Linux userland lacks — which is exactly what the CI VM is for.
+
+### Both parked facts verified in minutes
+
+- **`pkgconf` is a build dependency** with `-Denable_x11_support`. `pkgconf --modversion
+  xcb` → `1.17.0`; `xcb.pc` in `/usr/local/libdata/pkgconfig`, not `lib/pkgconfig`.
+- **All five stock vt fonts already carry all 18 wallpaper glyphs** — decoded from the
+  `VFNT0002` mapping tables, 5/5 halves, 10/10 quadrants, 3/3 shades on `spleen-12x24`,
+  `spleen-16x32`, `spleen-8x16`, `gallant` and `terminus-b32`.
+
+### The finding worth carrying forward
+
+The second one is not merely a closure. **The wallpaper works on a stock FreeBSD install
+with no font build at all**, yet the readme presents `tools/mkvtfont.py` as part of setup.
+That overstates the cost of adopting Sakura more than any other single piece of text in the
+project. New backlog item **V14**, folded into PLANS Part 3.
+
+### Working-tree state on handoff
+
+Clean apart from the seven modified `.devdocs/` files. `tools/` is intact — the deletion
+noted in the previous handoff was reverted; `git diff -- tools/` is empty.
+
+### Next session starts here
+
+PLANS.md *PENDING — v1 Readiness Plan*, **Part 1** — 15 minutes, unblocks all packaging.
+Then Part 4, then Part 2, then Part 3. Nothing is blocked and nothing awaits an answer.
+
+---
+
+## 2026-08-29 08:54 — Session 004 — v1 readiness audit and plan
+
+**Objective.** USER: *"analyse all the user facing docs and explanations and guides and the
+code to ensure that everything is comprehensive and detailed for users to understand how to
+use and configure and customise this display manager and prep for v1 — we need to ensure
+the pkgconfig is going to get all dependencies and install everything as a whole"*.
+
+**Outcome: analysis and planning only.** No product file was touched. The deliverable is
+the v1 plan in PLANS.md, the 19-item backlog in TODOS.md (Groups P and V), the rulings in
+DECISIONS_LOG D-011, and the new BLUEPRINT §9 *Distribution Topology*.
+
+### What "pkgconfig" turned out to mean
+
+Ambiguous on arrival — a FreeBSD port, or `pkg-config`/`linkSystemLibrary` resolution.
+USER settled it: **`pkg install sakura`**. There is no port anywhere, so it gets created in
+this repository.
+
+### The finding that matters most
+
+`build.zig.zon` `.paths` omits `sakura-ui` and `sakura-core`, which the same file declares
+as path dependencies. **The release copy of Sakura does not build.** This was proved rather
+than argued: `zig fetch --debug-hash .` lists 92 files and none from either directory, and a
+tree reconstructed from exactly the declared paths dies at configure time with
+`unable to open '…/sakura-ui': FileNotFound`. `license.md` is missing from the list as well.
+
+Everything else in packaging is downstream of this — a port cannot build from a distfile
+that is missing half the source. Recorded as a standing invariant in BLUEPRINT §9.1,
+because it will recur with any future path dependency and `check_invariants.py` cannot see
+it.
+
+### The Python question
+
+USER asked directly which Python is project work and which was agent-created, and objected
+to `tools/` existing. All three files were read in full and traced through `git log`.
+Upstream Ly at the fork point held one Python file and no `tools/` directory.
+`normalize_lang_files.py` is upstream (Moritz Reinel, 2024); `mkvtfont.py` came in with the
+wallpaper at the rebrand and serves it; `check_invariants.py` is agent-created, in the same
+commit as `AGENTS.md`, `.devdocs/`, `ci.yml` and the restored `contributing.md`.
+
+**No disposition taken. Nothing deleted.** USER: *"if there are py scripts that are
+necessary for the project obviously don't delete them"* and *"YOU DO NOT DELETE OR FUCK WITH
+ANYTHING"*. That constraint overrides every earlier reading and is recorded in D-011.
+
+### The failure worth carrying forward
+
+TODOS **E4** recorded the absence of `contributing.md` as a defect and restored it. The
+deletion was deliberate — D-000 says so plainly, and USER confirmed they keep deleting it.
+A USER decision was reclassified as a bug and reversed without being asked about. The rule
+now in D-011: before recording a missing file as a finding, check whether the commit that
+removed it removed it on purpose. `contributing.md` nonetheless stays, per the no-deletion
+constraint.
+
+### Working-tree state on handoff
+
+`tools/check_invariants.py` and `tools/mkvtfont.py` are **deleted in the working tree**
+(uncommitted, by USER) but still tracked. While that stands, `.github/workflows/ci.yml:18`
+fails and `readme.md:108,384,391` dangle. `git checkout tools/` restores both. Left
+untouched — D-011 Q1.
+
+### Two things this host could not verify
+
+> **SUPERSEDED 2026-08-29 09:21 (D-012).** Both were verifiable on this host and are now
+> answered — the host is FreeBSD 15.1 under the linuxulator, not Linux. `pkgconf` is
+> required; all five stock vt fonts already carry all 18 glyphs.
+
+Whether `pkgconf` is genuinely required for `linkSystemLibrary("xcb")` on FreeBSD, and
+whether the stock `spleen-12x24.fnt` the readme recommends at `:378` already carries the
+quadrant and shade glyphs. Both are flagged in PLANS and TODOS rather than assumed; both
+need a FreeBSD box.
+
+### Next session starts here
+
+PLANS.md *PENDING — v1 Readiness Plan*, Part 1. Fifteen minutes of work that unblocks all
+the packaging. Then Part 4, then Part 2, then Part 3.
+
+---
+
 ## 2026-08-27 07:52 — Session 003 — ecosystem branding in the readme
 
 **Objective.** USER: *"the predominant focus of this session is to ensure the branding the
@@ -192,6 +383,10 @@ refuses non-FreeBSD targets; no code was touched.
 
 **Next session.** Rule on D-005. Cut the v1.0.0 tag per D-008. Confirm the CI workflow
 actually executes on GitHub — it has still never run, only been validated locally.
+
+> **SUPERSEDED 2026-08-29 (D-011, D-012).** D-005 needed no ruling — `AGENTS.md` states the
+> rule outright. Tags and versions were later ruled out of scope entirely. Only the CI item
+> stands. Do not act on this list.
 
 ---
 

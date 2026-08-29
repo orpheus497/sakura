@@ -160,7 +160,7 @@ pub fn main(init: std.process.Init) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help                Shows all commands.
         \\-v, --version             Shows the version of Sakura.
-        \\-c, --config <str>        Overrides the default configuration path. Example: --config /usr/local/share/sakura
+        \\-c, --config <str>        Overrides the default configuration directory. Example: --config /usr/local/etc/sakura
         \\--validate-config <str>   Validates the given configuration file.
     );
 

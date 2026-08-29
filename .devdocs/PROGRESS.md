@@ -5,6 +5,238 @@ Most recent at top.
 
 ---
 
+## 2026-08-29 09:39 — v1 readiness plan executed in full (D-013)
+
+USER: *"proceed - i want this to be a normal pkg not something complicated"*. All four
+parts of the v1 plan executed. **23 of 23 backlog items closed.**
+
+### The ruling that shaped it
+
+**A normal port fetches distfiles.** `vendor.tar.zst` is not tracked — this reverses
+D-011 #3. `/usr/ports/Mk/Uses/zig.mk` already provides exactly the mechanism: `USES=zig`
+plus a `ZIG_TUPLE` list naming each Zig dependency as an ordinary distfile. No blob in the
+repository. `create_vendor_tarball.sh` is kept and documented as an air-gapped convenience
+only, and `vendor.tar.zst` was added to `.gitignore`, which had never named it.
+
+### Part 1 — and the correction the plan needed
+
+PLANS said to add `sakura-ui` and `sakura-core` to `.paths`. Done literally, that produced
+**1037 files** in the package: `.paths` does not honour `.gitignore`, so `.zig-cache/` and
+the vendored `zig-pkg/` trees came with them — machine-specific build cache plus a
+duplicate of every dependency the port fetches separately, for roughly 30 files of actual
+source.
+
+Naming the subpaths instead — `<dep>/build.zig`, `<dep>/build.zig.zon`, `<dep>/src`,
+mirroring what each sub-manifest declares for itself — gives **89 files, zero leakage**,
+with both dependency trees, `license.md` and `readme.md` present. The blocker is fixed and
+the invariant in BLUEPRINT §9.1 now states the correct form.
+
+### Part 2 — the port
+
+Written against the real convention, not invented: `zig.mk` was read in full and
+`devel/zls` used as the reference port. `lang/zig` is 0.16.0, matching
+`minimum_zig_version` exactly.
+
+All nine dependencies were resolved from the fetched `zig-pkg/` trees rather than guessed,
+which is the only way two of them surface at all — **LuaJIT**, lazy beneath `zlua` because
+the build requests `.lang = .luajit`, and a **second `translate_c` at 0.0.0**, zlua's own
+copy alongside the 1.0.0 that sakura-ui and sakura-core use.
+
+**One trap found and commented in the Makefile.** `install.zig:117` reads the binary from
+the literal path `zig-out/bin/sakura`, not from Zig's `--prefix`. `USES=zig` passes
+`--prefix ${PREFIX}` by default, which would both write outside the stage directory and
+break that read. The port defines its own `do-install` that omits `--prefix` and stages
+through `-Ddest_directory=${STAGEDIR}`.
+
+Config files ship as `.sample` so an upgrade cannot overwrite an edited `config.ini`.
+
+### Part 3 — the readme
+
+**94/94 options now covered: 75 named verbatim, 19 by explicit prefix row, 0 uncovered**
+(measured, not asserted). New sections: command-line reference, language, autologin,
+appearance, corner widgets, custom commands and labels, clock and status, sessions and
+behaviour, writing your own animations, a full key table with vi mode, and troubleshooting
+including single-user recovery from a broken `/etc/ttys`.
+
+`animation_timeout_sec` was the one option with neither a mention nor a prefix family; the
+coverage check caught it and it now has a row.
+
+### Part 4 and V14
+
+`res/config.ini` autologin comment now uses `$PREFIX_DIRECTORY`, so install-time
+substitution points it at the same paths as the options themselves — turning the
+BLUEPRINT §5 hazard into the fix. `main.zig` `--config` help corrected.
+`create_vendor_tarball.sh` documented.
+
+**V14 is the finding users will feel most.** The console-font section now leads with the
+fact that no font build is needed, with the stock-font coverage table. The prior text
+presented a Python toolchain as part of setup for a feature that works out of the box.
+
+### Verification
+
+`check_invariants.py` — all four families hold. `zig fetch --debug-hash .` — 89 files,
+both path dependencies, no cache or vendor leakage. Option coverage — 94/94.
+
+**Not built.** `zig build` needs FreeBSD base headers the linuxulator's Linux userland
+does not supply (BLUEPRINT §0), so the port needs one build test on a native FreeBSD
+userland before it can be called proven. `distinfo` is absent by design — always generated
+with `make makesum`, and that needs the `v1.0.0` tag, which is out of scope (D-011 #7).
+
+**Files modified: 8 product files + 7 trackers.** `build.zig.zon`, `src/main.zig`,
+`res/config.ini`, `readme.md`, `create_vendor_tarball.sh`, `.gitignore`, and four new
+files under `ports/`.
+
+---
+
+## 2026-08-29 09:21 — Every open question closed; the host is FreeBSD (D-012)
+
+USER, on being asked about D-005 again: *"why are you asking me about retroactive commenting
+again — what for, why does this keep coming up, I answer it every fucking time"*, and on the
+set as a whole: *"all these questions have me responding … we need to resolve them before
+anything, I'm sick of them coming up every session"*.
+
+**They were right, and the cause was a tracker defect rather than a gap in their answers.**
+Four of the six had already been answered, and were left with the word `OPEN` beside them.
+Each new session read the trackers, saw `OPEN`, and re-asked. The briefing then reprinted
+them under *Current Blockers*, which guaranteed the loop.
+
+### The host fact that invalidated two of them
+
+`uname -s` reports `Linux`; `uname -a` reports
+`FreeBSD 15.1-RELEASE releng/15.1-n283562-96841ea08dcf`. This is the **linuxulator** — a
+Linux userland on a FreeBSD kernel, with `/usr/local` and `/usr/share` visible. It was
+recorded once at PROGRESS 2026-08-24 10:00 and then lost. Two "needs a FreeBSD box" items
+were answerable on the spot. Now recorded permanently as **BLUEPRINT §0**.
+
+### Both verified, not asserted
+
+**`pkgconf` is required** with `-Denable_x11_support`: `/usr/local/bin/pkgconf` present,
+`pkgconf --modversion xcb` → `1.17.0`, `--cflags --libs xcb` →
+`-I/usr/local/include -L/usr/local/lib -lxcb`, `xcb.pc` in `/usr/local/libdata/pkgconfig`
+(**not** `lib/pkgconfig` — the ports convention, and what a packager needs to know).
+Closes TODOS P6/Q1.
+
+**Every stock vt font already carries all 18 wallpaper glyphs.** The `.fnt` mapping tables
+were decoded directly (`VFNT0002` header, bitmap block, then big-endian `{src,dst,len}`
+entries) and checked against the codepoints `Gif.zig` emits:
+
+| Font | Cell | Halves/full | Quadrants | Shades |
+| --- | --- | --- | --- | --- |
+| `spleen-12x24` | 12x24 | 5/5 | 10/10 | 3/3 |
+| `spleen-16x32` | 16x32 | 5/5 | 10/10 | 3/3 |
+| `spleen-8x16` | 8x16 | 5/5 | 10/10 | 3/3 |
+| `gallant` | 12x22 | 5/5 | 10/10 | 3/3 |
+| `terminus-b32` | 16x32 | 5/5 | 10/10 | 3/3 |
+
+**This is a finding, not just a closure.** The wallpaper — the feature the fork exists for —
+works on a stock FreeBSD install with no font build whatsoever. The readme's "Console font"
+section presents that build as setup, which overstates the friction of adopting Sakura by a
+wide margin. Raised as new backlog item **V14**: lead with "it works out of the box" and
+reframe `tools/mkvtfont.py` as the bring-your-own-font path.
+
+### Six closures
+
+D-005 (the rule is written in `AGENTS.md`; never was a question) · D-009 Q1 (the
+`license.md` carve-out **is** the disposition, taken when the entry was written) · D-010 Q1
+(closed by USER — the siblings link each other; other repositories are not this one's
+concern) · D-011 Q1 (closed by fact — `git diff -- tools/` empty, both files on disk) ·
+P6 Q1 · the stock-font question. **Zero open questions remain.**
+
+### The convention that stops the recurrence
+
+Recorded in D-012 and echoed at the head of BRIEFING.md: an answered question is rewritten
+*as its answer*, marked `CLOSED` with date and basis, and carries *"Do not re-table."* It is
+never left phrased as a question. A question whose answer is already in `AGENTS.md` is not a
+question. Nothing about another repository is ever an open item here. Briefings report
+outstanding **work**, not resolved history.
+
+**Also corrected:** the backlog count read "19" in three trackers while Groups P and V held
+22 items; now 23 with V14.
+
+**Files modified: 7 — all `.devdocs/`.** No product file was touched.
+
+---
+
+## 2026-08-29 08:54 — v1 readiness audit complete; plan approved, not yet executed (D-011)
+
+USER: *"analyse all the user facing docs and explanations and guides and the code to ensure
+that everything is comprehensive and detailed for users to understand how to use and
+configure and customise this display manager"*, plus *"ensure the pkgconfig is going to get
+all dependencies and install everything as a whole"*. Goal clarified mid-session as
+**`pkg install sakura`**.
+
+**Analysis only. No product file was modified.** Deliverable is the plan now in PLANS.md
+and the 19-item backlog now in TODOS.md (Groups P and V).
+
+### What the audit established
+
+**One defect blocks packaging outright, and it was proved rather than argued.**
+`build.zig.zon` `.paths` omits `sakura-ui` and `sakura-core`, the two path dependencies the
+same file declares. `zig fetch --debug-hash .` emits 92 files and none from either
+directory; a tree reconstructed from exactly the declared paths fails at configure time with
+`unable to open '…/sakura-ui': FileNotFound`. `license.md` is absent from the list too,
+which BSD 2-Clause does not permit for a redistribution. Recorded as BLUEPRINT §9.1.
+
+**No FreeBSD port exists at all.** No `Makefile`, `pkg-descr`, `pkg-plist`, `pkg-message`
+or `distinfo` anywhere in the tree; the only such filenames are inside vendored LuaJIT and
+termbox2. Installation is source-only.
+
+**`-Ddest_directory` — a complete `DESTDIR` equivalent — works and is documented nowhere.**
+So are `-Dname`, `-Denable_x11_support` and `-Dfallback_tty`.
+
+**The documentation covers about a quarter of the program.** 25 of 94 settings appear in
+`readme.md`; ~17 more are covered by prefix rows; ~52 exist only as comments inside
+`res/config.ini`, readable only after installing. Autologin ships its own PAM policy and is
+never mentioned. The vi-mode keys (`I`, `Esc`, `H`, `L`) are written down in no file at all.
+
+**Three outright errors.** `res/config.ini:65-66` sends autologin users to
+`/usr/share/{x,wayland}sessions/` — Linux paths, untokenised, so install-time substitution
+cannot repair them; same root cause as closed item B2 and the permanent hazard in
+BLUEPRINT §5. `main.zig:163` gives the wrong config directory in `--config`'s help text.
+`create_vendor_tarball.sh` has no explanation of what it is for.
+
+### The Python provenance question, answered
+
+USER asked which Python is project work and which was agent-created, and objected to
+`tools/` existing at all. Determined from `git log`, not assumed. Upstream Ly at the fork
+point (`db7f8ac`) held **one** Python file and **no `tools/` directory**.
+
+| File | Origin | Verdict |
+| --- | --- | --- |
+| `res/lang/normalize_lang_files.py` | `06e2839`, 2024-10-12, Moritz Reinel | Project — upstream Ly |
+| `tools/mkvtfont.py` | `f38fae8` — the rebrand commit, alongside `Gif.zig` | Project — serves the wallpaper |
+| `tools/check_invariants.py` | `4a3cdbd` — the process-scaffolding commit | Agent-created |
+
+All three were read in full before classifying. Detail in DECISIONS_LOG D-011.
+
+### A prior-session failure recorded
+
+TODOS item **E4** logged the absence of `contributing.md` as a defect and restored the file.
+That deletion was deliberate — D-000 records it as part of the rebrand, and USER confirmed
+they *"keep deleting it as trash"*. A USER decision was classified as a bug and reversed.
+Rule added in D-011: check whether a file's removal was intentional in the commit that
+removed it before recording its absence as a finding.
+
+### Nine rulings taken
+
+`pkg install sakura` is the goal · the port lives in this repository · `vendor.tar.zst`
+tracked · readme stays one file, no `docs/` · `res/config.ini` stays its own reference,
+comment-only edits · no man pages for v1 · **no tags and no version edits** · CI toolchain
+pinning left alone · BRIEFING's stale SHAs left alone. Over all of it:
+**nothing is deleted.**
+
+### Not verifiable from this host — **WRONG; SUPERSEDED 2026-08-29 09:21 (D-012)**
+
+> Both were verifiable here and are now answered: `pkgconf` **is** required, and every stock
+> vt font **already carries** all 18 glyphs. The premise below — that this host is not
+> FreeBSD — was false. It is FreeBSD 15.1 under the linuxulator. See BLUEPRINT §0.
+
+Whether `pkgconf` is genuinely required for `linkSystemLibrary("xcb")`, and whether the
+stock `spleen-12x24.fnt` the readme recommends already carries the quadrant and shade
+glyphs. Both need a FreeBSD box. Both flagged in PLANS and TODOS rather than assumed.
+
+---
+
 ## 2026-08-27 07:52 — Ecosystem branding landed in the readme (D-010)
 
 USER: *"the predominant focus of this session is to ensure the branding the documentation

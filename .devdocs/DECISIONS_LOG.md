@@ -5,6 +5,254 @@ TODOs scoped into detail. Most recent at top.
 
 ---
 
+## D-013 — A normal package: distfiles, not a vendored blob
+**2026-08-29 09:39 — RESOLVED by USER instruction; v1 plan executed**
+
+USER: *"proceed - i want this to be a normal pkg not something complicated"*.
+
+### The ruling, and what it overturned
+
+**`vendor.tar.zst` is NOT tracked.** This reverses D-011 #3, which had ruled it
+tracked so the port could build offline. A normal FreeBSD port fetches its
+dependencies as ordinary distfiles, and the framework already has the mechanism:
+`USES=zig` plus a `ZIG_TUPLE` list, with each Zig dependency named as a distfile that
+`make fetch` retrieves like any other. No blob in the repository, no offline
+special-casing.
+
+`create_vendor_tarball.sh` stays — nothing is deleted — but is now documented for what
+it actually is: an optional convenience for air-gapped builds, explicitly *not* the
+port's dependency mechanism. `vendor.tar.zst` was added to `.gitignore`, which
+previously did not name it, so it cannot be committed by accident.
+
+### The packaging mechanism, verified against the ports tree on this host
+
+`/usr/ports/Mk/Uses/zig.mk` exists and `lang/zig` is **0.16.0**, matching
+`minimum_zig_version` exactly. `devel/zls` was read as the reference implementation of
+a Zig port. Every dependency was resolved from the fetched packages in `zig-pkg/`
+rather than guessed — including the two a reader would not find in any manifest:
+**LuaJIT**, which arrives lazily beneath `zlua` because the build requests
+`.lang = .luajit`, and a **second `translate_c` (0.0.0)**, which is `zlua`'s own copy
+alongside the 1.0.0 that `sakura-ui` and `sakura-core` use. Nine tuples in total.
+
+### Two findings that changed the plan as written
+
+**1. `.paths` does not honour `.gitignore`.** PLANS Part 1 said to add `sakura-ui` and
+`sakura-core` to `build.zig.zon`'s `.paths`. Done literally, that swept `.zig-cache/`
+and the vendored `zig-pkg/` trees into the package: **1037 files, of which about 30
+were source.** The distfile would have shipped machine-specific build cache and a
+duplicate of every dependency the port fetches separately.
+
+The fix is to name the subpaths individually — `sakura-ui/build.zig`,
+`sakura-ui/build.zig.zon`, `sakura-ui/src`, and the same three for `sakura-core` —
+mirroring what the sub-manifests already do for themselves. Result: **89 files, zero
+cache or vendor leakage**, both path dependencies present with their full source.
+
+Recorded as an extension of the BLUEPRINT §9.1 invariant: a path dependency must be
+added to `.paths`, and it must be added *as its source subpaths*, never as the
+directory.
+
+**2. `install.zig:117` hardcodes `zig-out/bin/sakura`.** The installer reads the built
+binary from that literal relative path, not from Zig's `--prefix`. `USES=zig` passes
+`--prefix ${PREFIX}` by default, which would both write outside the stage directory and
+break that read. The port therefore defines its own `do-install` and deliberately does
+not pass `--prefix`, letting Zig's install step land in `${WRKSRC}/zig-out` where
+`install.zig` expects it. This is commented in `ports/Makefile` because it is precisely
+the kind of thing a later edit would "clean up" and break.
+
+### Package layout decisions
+
+Configuration files the administrator edits — `config.ini`, `startup.sh`, `setup.sh`
+and both PAM policies — are installed as `.sample` and materialised by pkg on first
+install only, so an upgrade cannot overwrite an edited file. `config.ini.example` stays
+a plain file: it is the pristine reference the readme points at.
+
+No `rc.d` script: Sakura is started by `getty(8)` from `/etc/ttys`. No `RUN_DEPENDS`
+for power, VT switching or LEDs, all of which are syscalls (§4). `xorg`/`xorg-xauth`
+are needed by X11 *sessions*, not by Sakura, and are deliberately not run dependencies.
+
+### One thing the port cannot do yet, stated plainly
+
+`USE_GITHUB` with `DISTVERSIONPREFIX=v` and `DISTVERSION=1.0.0` fetches the `v1.0.0`
+tag. **No tag exists**, and D-011 #7 rules tags out of scope. The port is written ready
+for the tag and cannot fetch until one is cut. `distinfo` is likewise absent by design —
+it is always generated with `make makesum`, never hand-written, and doing so requires
+the tag to exist first.
+
+---
+
+## D-012 — The development host IS FreeBSD; every recurring question is closed
+**2026-08-29 09:21 — RESOLVED by verification and USER instruction**
+
+USER: *"p6q1 - what the fuck are you talking about we are on freebsd - youre in a
+linuxculator"*, and *"all these questions have me responding why the fuck are you talking
+about, we need to resolve them before anything, im sick of them coming up every session"*.
+
+### The root cause of the recurrence
+
+Sessions ran `uname -s`, read `Linux`, and concluded that anything platform-specific
+"needs a FreeBSD box". **The host is FreeBSD.** `uname -a` reports:
+
+```
+Linux cyronetics 5.15.0 FreeBSD 15.1-RELEASE releng/15.1-n283562-96841ea08dcf GENERIC x86_64
+```
+
+That is the FreeBSD **linuxulator** (`/compat/linux` exists): a Linux userland running on a
+FreeBSD 15.1-RELEASE kernel, with the host's `/usr/local` and `/usr/share` visible. It was
+already recorded once, at PROGRESS 2026-08-24 10:00, and later sessions did not carry it
+forward.
+
+**Standing fact for every future session: FreeBSD facts are verifiable here. Do not defer a
+platform question to "a FreeBSD host".** `pkgconf`, `vtfontcvt`, `otf2bdf`, the ports tree
+under `/usr/local`, and `/usr/share/vt/fonts` are all directly readable. The one genuine
+limit is that `zig build` links against FreeBSD base headers unavailable from inside the
+Linux userland — that, and only that, is what CI's FreeBSD VM is for.
+
+### The two "unverifiable" facts, now verified
+
+**1. `pkgconf` is required — CONFIRMED.** Closes TODOS **P6/Q1**.
+
+| Check | Result |
+| --- | --- |
+| `pkgconf` binary | `/usr/local/bin/pkgconf` (also `/usr/local/bin/pkg-config`) |
+| `xcb.pc` location | `/usr/local/libdata/pkgconfig/xcb.pc` — **not** `/usr/local/lib/pkgconfig` |
+| `pkgconf --modversion xcb` | `1.17.0` |
+| `pkgconf --cflags --libs xcb` | `-I/usr/local/include -L/usr/local/lib -lxcb` |
+| `libxcb.so` | `/usr/local/lib/libxcb.so.1.1.0` |
+
+`linkSystemLibrary("xcb")` resolves through pkg-config, the `.pc` file exists only in the
+`libdata` path, and pkgconf reads it correctly. So `pkgconf` is a **build dependency**
+whenever `-Denable_x11_support` is on. It is no longer an inference.
+
+**2. The stock vt fonts already carry every wallpaper glyph — CONFIRMED.** Closes the
+`spleen-12x24.fnt` question flagged in PLANS and BRIEFING.
+
+The `.fnt` mapping tables were decoded directly (`VFNT0002` header, then
+`glyph_count × howmany(w,8) × h` bitmap bytes, then `{src,dst,len}` map entries, all
+big-endian) and checked against the 18 codepoints `Gif.zig` emits:
+
+| Font | Cell | Halves/full | Quadrants | Shades |
+| --- | --- | --- | --- | --- |
+| `spleen-12x24.fnt` | 12x24 | 5/5 | 10/10 | 3/3 |
+| `spleen-16x32.fnt` | 16x32 | 5/5 | 10/10 | 3/3 |
+| `spleen-8x16.fnt` | 8x16 | 5/5 | 10/10 | 3/3 |
+| `gallant.fnt` | 12x22 | 5/5 | 10/10 | 3/3 |
+| `terminus-b32.fnt` | 16x32 | 5/5 | 10/10 | 3/3 |
+
+**Consequence worth documenting to users:** the wallpaper works on a stock FreeBSD install
+with no font build at all. `tools/mkvtfont.py` is for using *your own* font, not a
+prerequisite. The readme currently implies otherwise. Folded into TODOS V14.
+
+### Every previously-open question, closed
+
+| ID | Was | Now |
+| --- | --- | --- |
+| D-005 | "needs USER ruling" | **Closed** — `AGENTS.md` already states the rule; there was never a question |
+| D-009 Q1 | "OPEN: `res/setup.sh` provenance" | **Closed** — the carve-out *is* the disposition, taken at the time |
+| D-010 Q1 | "OPEN: reciprocal cross-linking" | **Closed by USER** — the siblings link each other; other repos are not this repo's concern |
+| D-011 Q1 | "OPEN: working-tree state of `tools/`" | **Closed by fact** — `git diff -- tools/` is empty |
+| P6 Q1 | "needs a FreeBSD host" | **Closed** — verified above |
+| spleen font | "needs a FreeBSD host" | **Closed** — verified above |
+
+**There are now zero open questions in this repository.**
+
+### The rule that prevents this recurring
+
+Three of the six above were **already answered** when a later session re-tabled them. The
+failure is a documentation convention: an answered question was left with the string
+`OPEN` next to it, so the next session re-read it and re-asked.
+
+1. **A question that has been answered is rewritten as its answer**, marked `CLOSED` with
+   the date and the basis, and carries the words *"Do not re-table."* It is never left
+   phrased as a question.
+2. **A question whose answer is already written in `AGENTS.md` is not a question.** Apply
+   the directive and move on.
+3. **Nothing about another repository is ever an open item here.**
+4. **Before writing "needs a FreeBSD host", run the check** — see the host fact above.
+5. **Session briefings report outstanding *work*, not resolved history.** Closed decisions
+   belong in this log, not in the briefing's blocker list.
+
+---
+
+## D-011 — v1 readiness: packaging, documentation scope, and the Python ruling
+**2026-08-29 08:54 — RESOLVED by USER instruction**
+
+USER directed a v1 readiness pass covering two things: that the user-facing documentation
+is comprehensive enough for someone to install, configure and customise Sakura, and that
+the packaging pulls in every dependency and installs the product as a whole.
+
+### The goal, stated plainly by USER
+
+**`pkg install sakura`.** Not a source-only install, not a Zig package for other Zig
+projects. A FreeBSD port and package. Everything in PLANS.md's v1 section serves that.
+
+### Rulings taken this session
+
+| # | Question | USER ruling |
+| --- | --- | --- |
+| 1 | What does "pkgconfig" mean | A FreeBSD port so `pkg install sakura` works |
+| 2 | Where does the port skeleton live | In this repository — there is no port yet, so it has to be created here |
+| 3 | `vendor.tar.zst` tracked or ignored | **Tracked**, so the port builds without network |
+| 4 | Readme split into `docs/` | **No.** One file. No new documentation folders |
+| 5 | `res/config.ini` edit scope | It stays its own documentation — people edit it directly. Comment-only edits; the readme becomes the guide, not a duplicate |
+| 6 | Man pages | Not for v1 |
+| 7 | Tags and versions | **Out of scope entirely.** No tag, no edit to `sakura_version` or `build.zig.zon`'s `.version` |
+| 8 | CI toolchain pinning | Leave alone |
+| 9 | BRIEFING's unreachable commit SHAs | Leave alone |
+
+### The overriding constraint
+
+**Nothing is deleted.** USER: *"YOU DO NOT DELETE OR FUCK WITH ANYTHING"*, and
+*"if there are py scripts that are necessary for the project obviously don't delete them"*.
+This supersedes any earlier reading of Directive 3 as permitting removals, and it applies
+to `contributing.md`, `tools/`, `res/lang/normalize_lang_files.py` and the CI workflow
+alike. Every item in the v1 plan is an addition or a correction; none is a removal.
+
+### Python provenance — the audit USER asked for
+
+USER: *"I want to know what python is project related and what is shit you created"*, and
+separately: *"I am getting sick of finding folders in my repos called tools or docs that you
+make of your own volition"*. Three Python files exist. Determined from `git log`, not
+assumed:
+
+| File | Introduced | Verdict |
+| --- | --- | --- |
+| `res/lang/normalize_lang_files.py` | `06e2839`, 2024-10-12, **Moritz Reinel** | **Project.** Upstream Ly, predates the fork by ~2 years. Reorders all 25 locale files to match `Lang.zig`'s field order, leaving a blank line for missing translations. `src/config/Lang.zig:2` points at it. Upstream removed it once and reverted (`7a82b51`). |
+| `tools/mkvtfont.py` | `f38fae8`, 2026-08-23 — the rebrand commit | **Project.** Added in the same commit as `Gif.zig`, `gif/decoder.zig` and `pixel_sakura.gif`. It exists to serve the wallpaper: it patches the zero-sized glyphs `otf2bdf` emits, restates every `DWIDTH` to the cell so `vtfontcvt` accepts the file, and synthesises the 15 quadrants and 3 shades at exact cell size so the image does not band. Documented as a user workflow at `readme.md:381-401`. |
+| `tools/check_invariants.py` | `4a3cdbd`, 2026-08-24 | **Agent-created.** Added in the process-scaffolding commit alongside `AGENTS.md`, `.devdocs/`, `.coderabbit.yaml`, `.github/workflows/ci.yml` and the restored `contributing.md`. Its stated purpose is catching what *"a rebrand or a rename quietly breaks"* — it verifies agent-introduced drift, not product behaviour. `ci.yml` exists only to run it. |
+
+Upstream Ly at the fork point (`db7f8ac`) contained exactly one Python file and **no
+`tools/` directory**. The directory is this fork's.
+
+**Coupling worth knowing:** `check_invariants.py`'s fourth check reads `mkvtfont.py`
+directly, and `ci.yml` depends on `check_invariants.py`. `mkvtfont.py` depends on neither
+and stands alone.
+
+**No disposition is taken on any of the three.** They stay. Recorded so the question is
+never re-asked.
+
+### A process failure recorded against a prior session
+
+TODOS item **E4** classified the absence of `contributing.md` as a defect —
+*"No `contributing.md` — deleted in `f38fae8`"* — and restored the file. That deletion was
+deliberate: D-000 records it as an intentional part of the rebrand, and USER confirmed this
+session that they *"keep deleting it as trash"*. A USER decision was logged as a bug and
+reversed without being asked about.
+
+**Rule going forward:** a file that a USER commit deliberately removed is not a defect for
+its absence. Before recording a missing file as a finding, check whether its removal was
+intentional in the commit that removed it. Per the no-deletion constraint above,
+`contributing.md` is nonetheless left in place.
+
+### Q1 — CLOSED 2026-08-29 09:21 by fact. Do not re-table.
+
+`tools/check_invariants.py` and `tools/mkvtfont.py` were momentarily deleted in the working
+tree during session 004. **They are present and identical to HEAD** — verified:
+`git diff -- tools/` is empty and both files are on disk. `ci.yml:18` and
+`readme.md:108,384,391` resolve. There is nothing here for any session to act on or ask
+about.
+
+---
+
 ## D-010 — Sakura is documented as the login layer of the Sakura desktop
 **2026-08-27 — RESOLVED by USER instruction**
 
@@ -59,10 +307,11 @@ runtime hand-off), new §*Running hikari-sakura* under Sessions, and Credits/Lic
 extended with sibling provenance. `contributing.md`, the `.github/` templates and `res/`
 were offered and **declined** for this pass — see PLANS.md.
 
-**Q1 — OPEN: reciprocal cross-linking.** hikari-sakura's readme names generic display
-managers ("GDM, SDDM, greetd") and does not mention Sakura; sofi's readme cross-links
-hikari-sakura throughout but never Sakura. The lineage is therefore documented in one
-direction only. Fixing it means editing two other repositories and is out of scope here.
+**Q1 — CLOSED 2026-08-29 by USER. Do not re-table.** USER states the sibling repositories
+link each other, and that cross-repository content is not this repository's concern. The
+observation that prompted it (hikari-sakura's readme naming "GDM, SDDM, greetd") describes
+another repository's text and is therefore out of scope by definition. **No Sakura session
+raises cross-repo linking again.**
 
 ---
 
@@ -97,7 +346,13 @@ No source file carries a licence header, so no code changed. `build.zig.zon` has
 1. Bundled dependencies keep their own licences (MIT/BSD). Unchanged by this decision.
 2. `res/setup.sh` keeps its existing notice and is explicitly excluded from the BSD grant.
 
-**Q1 — OPEN: `res/setup.sh` provenance.** The file's header records three copyrights:
+**Q1 — CLOSED 2026-08-29. Accepted and documented; do not re-table.** The disposition was
+already taken when this entry was written — USER elected to leave the header untouched and
+`license.md` carves the file out. That is route 3 of the three listed below, and it is the
+shipped position. Nothing further is required of any session. The background follows as the
+record of *why* the carve-out exists, not as an outstanding question.
+
+**Background — `res/setup.sh` provenance.** The file's header records three copyrights:
 Oswald Buddenhagen (2001-2005, *"extracted from kde-workspace, `kdm/kfrontend/genkdmconf.c`"*),
 Pier Luigi Fiorini (2015-2016), and The Fairy Glade (2024) — and upstream labels the result
 WTFPL. kde-workspace/KDM was GPL-2.0-or-later. That WTFPL label is therefore an upstream
@@ -118,14 +373,11 @@ BSD text it would likely have pushed `license.md` below the similarity threshold
 `licensee` uses, costing the repo its `BSD-2-Clause` detection and badge. The short note
 keeps detection intact and still answers the reader's question.
 
-**To close Q1**, one of:
-- Confirm the upstream relicensing was authorised by the original authors; or
-- Replace `res/setup.sh` with an original implementation. It is a shell-profile sourcing
-  script (per-shell `profile`/`login` handling plus the X11 `xinitrc.d`/`Xresources` block)
-  — reimplementable from `sh(1)` and `xinit(1)` behaviour without reference to the original;
-  or
-- Accept and document the file as separately licensed under its stated terms, which is the
-  current state.
+Three routes existed. **Route 3 was taken and Q1 is closed on it:**
+1. Confirm the upstream relicensing was authorised by the original authors; or
+2. Replace `res/setup.sh` with an original implementation; or
+3. **← TAKEN.** Accept and document the file as separately licensed under its stated terms.
+   This is the current and final state.
 
 ---
 
@@ -221,7 +473,23 @@ Verified: 8 of 8 monospace fonts build, previously 0 of 6.
 ---
 
 ## D-005 — Code Documentation Standards: scope of application
-**2026-08-24 08:48 — OPEN, needs USER ruling**
+**2026-08-24 08:48 raised · 2026-08-29 09:21 — CLOSED. Do not re-table.**
+
+**There was never a question here.** `AGENTS.md` states the rule outright:
+*"DO NOT retroactively add commenting unless explicitly requested by the user."*
+That is the answer. No ruling was needed and none is to be requested again.
+
+**Settled behaviour:** existing comments are brought into line only when a task already
+requires editing them. `Script function and purpose:` / `Function purpose:` /
+`Action purpose:` headers are added to **new** code and to files being written, never
+retrofitted onto untouched ones. The ~100 Zig and shell sources that predate the standard
+stay as they are.
+
+The original framing is kept below as the record of what was mis-tabled.
+
+---
+
+**Original framing (mis-tabled as an open question):**
 
 `AGENTS.md` mandates `Script function and purpose:` / `Function purpose:` /
 `Action purpose:` prefixes, and for shell scripts placement directly beneath the shebang.
@@ -232,11 +500,10 @@ The remediation backlog touches five shell/Python files that predate the standar
 (`res/setup.sh`, `res/startup.sh`, `res/sakura-wrapper`, `tools/mkvtfont.py`,
 `res/lang/normalize_lang_files.py`). None carry the mandated prefixes.
 
-**Reading applied unless overruled:** the prohibition wins. I will bring *existing*
-comments into line where a TODO already requires editing them (C1's docstring rewrite,
-B1/B2's comment corrections), but will **not** add new `Script function and purpose:`
-headers to files the backlog does not otherwise touch.
-- Q: Do you want a separate, explicit pass to bring all scripts up to the standard?
+Reading applied, and now the closed position: the prohibition wins. Existing comments are
+brought into line where a task already requires editing them (C1's docstring rewrite,
+B1/B2's comment corrections); new `Script function and purpose:` headers are **not** added
+to files a task does not otherwise touch.
 
 ---
 

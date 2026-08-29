@@ -1,12 +1,55 @@
 # BRIEFING — Sakura
 
-Current project status and phase. Last updated: 2026-08-27 07:52.
+Current project status and phase. Last updated: 2026-08-29 09:39.
+
+> **To the next session: there are no open questions.** Six were closed on 2026-08-29
+> (D-012) after being re-asked across multiple sessions because they were left labelled
+> `OPEN` in this file and in DECISIONS_LOG after having been answered. Report outstanding
+> **work**; do not resurface settled decisions as blockers. The host is FreeBSD under the
+> linuxulator (BLUEPRINT §0) — verify platform facts here rather than deferring them.
 
 ---
 
 ## Current Phase
 
-**Phase 4 — Session End. Session 003 (ecosystem branding) complete.**
+**Phase 3 complete → Phase 4. Session 005 — the v1 readiness plan is executed in full.**
+
+All four parts done, **23 of 23 backlog items closed**, active list empty. Nothing is
+committed; review and commit is USER's call.
+
+**The goal was `pkg install sakura`, and USER's ruling on how: a normal package.** The port
+fetches its dependencies as ordinary distfiles via `USES=zig` and `ZIG_TUPLE` — no vendored
+blob. `vendor.tar.zst` is *not* tracked, reversing D-011 #3. See **D-013**.
+
+| Part | Result |
+| --- | --- |
+| 1 — packaging blocker | `build.zig.zon` `.paths` fixed. The release copy builds |
+| 2 — the port | `ports/` — `Makefile`, `pkg-descr`, `pkg-plist`, `pkg-message` |
+| 3 — documentation | readme covers **94/94** options; 11 new sections |
+| 4 — three wrong things | All corrected |
+
+**Two places reality corrected the plan, both recorded in D-013:**
+
+1. **`.paths` does not honour `.gitignore`.** Listing `sakura-ui`/`sakura-core` as
+   directories, as the plan said, swept `.zig-cache/` and the vendored `zig-pkg/` trees
+   into the package — **1037 files for ~30 files of source**. Naming the source subpaths
+   gives **89 files, zero leakage**. This recurs with any future path dependency.
+2. **`install.zig:117` hardcodes `zig-out/bin/sakura`.** `USES=zig` passes
+   `--prefix ${PREFIX}` by default, which would write outside the stage directory *and*
+   break that read. The port supplies its own `do-install`.
+
+**The finding users will feel most (V14):** every stock FreeBSD console font already
+carries all 18 wallpaper glyphs, so **no font build is needed**. The readme had presented a
+Python toolchain as setup for a feature that works out of the box.
+
+**Standing constraint, honoured throughout: nothing is deleted.** No tag was created;
+`sakura_version` and `build.zig.zon`'s `.version` are untouched.
+
+---
+
+## Prior Phase — Session 003, ecosystem branding
+
+**Complete.**
 
 The 2026-08-27 session established the framing the documentation had never carried: Sakura
 is the **login layer of the Sakura desktop**, a three-component Wayland desktop environment
@@ -36,11 +79,12 @@ hold · 8/8 fonts build.
 
 Nothing is in progress. A v1 readiness pass on 2026-08-25 re-verified the branding and the
 user-facing documentation and closed two of the three governance questions: D-002 (keep
-`AGENTS.md` and `.devdocs/` tracked) and D-003 (drop the pango/cairo FOSS exception). Only
-D-005 (retroactive-commenting prohibition vs the documentation standard) remains open. That
+`AGENTS.md` and `.devdocs/` tracked) and D-003 (drop the pango/cairo FOSS exception). That
 pass also recorded D-008, a release-mechanics constraint that must be honoured when tagging
-v1.0.0. The USER then relicensed the project from WTFPL to BSD 2-Clause (D-009), which
-raises one open provenance question against `res/setup.sh`.
+v1.0.0, and the USER relicensed the project from WTFPL to BSD 2-Clause (D-009).
+
+*(This paragraph previously ended by naming D-005 and a D-009 provenance question as open.
+Both were closed on 2026-08-29 — D-012. Nothing here is outstanding.)*
 
 USER approved execution on 2026-08-24 and lifted the Directive 3 gate on removals, with
 the instruction that removals happen last and only after verifying they were still
@@ -82,42 +126,86 @@ crawler, removes the compositor from the session list **silently**.
 | GIF-wallpaper focus | Font tool synthesises all 18 glyphs; 8/8 fonts build |
 | Defaults documentation | Reconciled; the one divergence is documented in place |
 | FOSS compliance (Directive 2) | Compliant — all 10 deps MIT/BSD |
-| Invariant drift | Now enforced in CI by `tools/check_invariants.py` |
+| Invariant drift | Enforced by `tools/check_invariants.py`; all four families hold |
+
+**v1 readiness after execution (D-013): ready, pending one build test.**
+
+| Area | State |
+| --- | --- |
+| Zig package integrity | **Fixed** — 89 files, both path dependencies, no cache or vendor leakage |
+| FreeBSD port | **Exists** — `ports/` with `Makefile`, `pkg-descr`, `pkg-plist`, `pkg-message` |
+| Build-option documentation | **Complete** — all nine `-D` options in a readme table |
+| Dependency specification | **Split** build / runtime / session / optional; `pkgconf` confirmed |
+| Dependency fetching | **Distfiles** via `ZIG_TUPLE`, nine entries incl. LuaJIT and the second `translate_c` |
+| Settings documented to users | **94 of 94** — 75 named verbatim, 19 by prefix row, 0 uncovered |
+| Autologin, vi keys, corner widgets, custom binds, appearance, language, clock, sessions | **Documented** |
+| Command-line reference | **Present** — all four options in one table |
+| Troubleshooting guidance | **Present**, including single-user recovery from a broken `/etc/ttys` |
+| Known-wrong text | **Corrected** — `config.ini` autologin comment, `main.zig` `--config` help, vendor script header |
+| Console font | **Corrected** — leads with "no font build needed" plus the stock-font table |
+| Build verification | **Outstanding** — needs a native FreeBSD userland (BLUEPRINT §0) |
+| `distinfo` | **Absent by design** — `make makesum` generates it, and that needs the `v1.0.0` tag |
 
 ---
 
 ## Progress
 
-- Audit: **100%** (D-001 complete)
+- Audit (D-001, post-rebrand): **100%**
 - `.devdocs/` initialization: **100%** (Phase 1 complete)
-- Remediation: **100%** — 20 of 21 defects fixed, 1 (F2) cancelled as an invalid finding,
-  0 in progress
+- Remediation: **100%** — 20 of 21 defects fixed, 1 (F2) cancelled as an invalid finding
+- Ecosystem branding (D-010): **100%** for `readme.md`; 3 surfaces parked in PLANS
+- **v1 audit (D-011): 100%** — 19 items scoped into TODOS Groups P and V
+- **v1 execution: 100%** — all four parts done, 23 of 23 items closed (D-013)
 
 ---
 
 ## Current Blockers
 
-None blocking work. One governance question remains for a USER ruling:
+**None. There are zero open questions and nothing awaiting an answer.**
 
-1. **D-005** — the mandated comment prefixes versus the prohibition on adding comments
-   retroactively. Applied as: bring existing comments into line when already editing them;
-   do not retrofit headers onto untouched files.
+All six items that previous briefings carried here were closed on 2026-08-29 — see
+DECISIONS_LOG **D-012**, which also records why they kept recurring and the convention that
+stops it. **Do not re-table any of them, and do not reproduce this list as "open" in a
+future briefing:**
 
-Closed on 2026-08-25: **D-002** (keep `AGENTS.md` at the root and `.devdocs/` committed,
-both public) and **D-003** (drop the pango/cairo exception; Directive 2 is now an
+| Was listed as open | Actual status |
+| --- | --- |
+| D-005 — retroactive commenting | `AGENTS.md` states the rule outright. Never was a question |
+| D-009 Q1 — `res/setup.sh` provenance | The `license.md` carve-out **is** the disposition, taken at the time |
+| D-010 Q1 — cross-repo linking | Closed by USER: the siblings link each other; other repos are not this repo's concern |
+| D-011 Q1 — `tools/` working tree | Closed by fact: `git diff -- tools/` is empty, both files present |
+| P6 Q1 — is `pkgconf` required | **Yes**, verified: `pkgconf --modversion xcb` → `1.17.0` |
+| Stock font glyph coverage | **Complete**, verified: all 5 stock vt fonts carry all 18 glyphs |
+
+**The host is FreeBSD 15.1-RELEASE under the linuxulator** (BLUEPRINT §0). `uname -s` says
+`Linux` and has misled prior sessions into deferring platform checks. Run the check instead.
+
+**D-008 is recorded, not scheduled.** USER ruled tags and versions out of scope entirely
+(D-011 #7): no tag is created, and neither `sakura_version` in `build.zig:22` nor
+`.version` in `build.zig.zon:3` is touched by any part of the v1 plan. D-008 remains on
+file as a constraint for whoever eventually cuts a release. No tag exists today —
+`git describe` finds nothing, so `sakura --version` reports `1.0.0` verbatim.
+
+Closed earlier, on 2026-08-25: **D-002** (keep `AGENTS.md` at the root and `.devdocs/`
+committed, both public) and **D-003** (drop the pango/cairo exception; Directive 2 is now an
 unqualified MIT/BSD rule).
-
-Not a blocker but a release gate: **D-008** — tagging `v1.0.0` without bumping
-`sakura_version` breaks `zig build` on the following commit.
-
-Open but not blocking: **D-009 Q1** — `res/setup.sh` derives from kde-workspace
-(`kdm/kfrontend/genkdmconf.c`, GPL-2.0-or-later) via a WTFPL relabel made upstream. The
-file is carved out of the BSD relicence pending a provenance check.
 
 ---
 
 ## Recent Architectural Decisions
 
+- **D-011** — v1 readiness. Goal is `pkg install sakura`; the port is created in this
+  repository. Nine rulings taken, the overriding one being that **nothing is deleted** and
+  no tag or version is touched. Records the Python provenance audit USER asked for
+  (`normalize_lang_files.py` upstream · `mkvtfont.py` project, added with the wallpaper ·
+  `check_invariants.py` agent-created), with **no disposition taken on any of the three**.
+  Also records a prior-session failure: TODOS E4 classified a deliberate USER deletion of
+  `contributing.md` as a defect and reversed it. New rule — check whether a file's removal
+  was intentional before recording its absence as a finding.
+- **BLUEPRINT §9** — Distribution Topology added. Separates the three distinct meanings of
+  "package" (Zig package · installed tree · FreeBSD package), records the `.paths` invariant
+  as standing rather than one-off, and documents `-Ddest_directory` as the staging
+  mechanism a port binds to.
 - **D-010** — Sakura documented as the login layer of the Sakura desktop (Sakura ·
   hikari-sakura · Sofi), with the naming lineage recorded. Integration is by freedesktop
   convention only; independence from both siblings is stated explicitly in the readme so the
@@ -140,21 +228,32 @@ file is carved out of the BSD relicence pending a provenance check.
 
 ## Next 3–5 Concrete Execution Steps
 
+From PLANS.md *PENDING — v1 Readiness Plan*. Steps 1–4 are the plan; 5–7 remain from
+earlier passes.
+
+Parts 1–4 are **done**. What remains:
+
 | # | Step | Est. | Gate |
 | --- | --- | --- | --- |
-| 1 | Review and commit the working tree: `readme.md` from this pass, plus the still-uncommitted 10:17 review and 2026-08-25 v1 changes | 15 min | — |
-| 2 | Rule on D-005, the one remaining governance question | 10 min, USER | — |
-| 3 | Add issue routing to `.github/ISSUE_TEMPLATE/*.yml` — PLANS item 1, the declined surface that matters first once the desktop has users | 15 min | — |
-| 4 | Confirm the CI workflow actually runs on GitHub — it has never executed, only been validated locally | 15 min | push |
-| 5 | Tag `v1.0.0`, then bump `sakura_version` and `build.zig.zon` to 1.0.1 per D-008 | 10 min | tag |
-| 6 | Cross-repo reciprocity (D-010 Q1) — link back to Sakura from hikari-sakura and Sofi; batch with v1.0.0 coordination | 20 min | other repos |
-| 7 | Optional: extend `check_invariants.py` to the cell-geometry invariant recorded in BLUEPRINT §6 | 30 min | — |
+| 1 | **Review and commit** the 8 modified product files and the 4 new `ports/` files | USER | — |
+| 2 | **Build-test `ports/`** on a native FreeBSD userland; confirm the staged tree matches `pkg-plist` entry for entry | 30 min | a FreeBSD userland |
+| 3 | `make makesum` to generate `distinfo` | 5 min | needs the `v1.0.0` tag to exist |
+| 4 | Optional — issue routing in `.github/ISSUE_TEMPLATE/*.yml`; matters once the desktop has users | 15 min | — |
+
+Step 3 is a **USER decision, not a task**: tags are out of scope per D-011 #7, and the
+port cannot fetch until `v1.0.0` exists. D-008 records the sequence for cutting it.
 
 ---
 
 ## Awaiting
 
-A ruling on D-005, and a review of the uncommitted changes — which now include this
-session's `readme.md` rewrite alongside the earlier unreviewed passes. Nothing is blocked on
-either. The v1.0.0 tag is the USER's to cut; see D-008 for the two-step sequence it
-requires, and D-010 Q1 for the cross-repository linking worth doing in the same window.
+**Review and commit.** The v1 work is done and verified as far as this host allows;
+nothing is committed.
+
+One thing genuinely needs USER: **whether to cut the `v1.0.0` tag.** The port's
+`USE_GITHUB` fetch and `make makesum` both depend on it, and tags were ruled out of scope
+in D-011 #7 — so the port is written ready for it and stops there. D-008 records the exact
+sequence (tag at the release commit, then immediately bump `build.zig:22` **and**
+`build.zig.zon:3` together).
+
+No question is open, no ruling is pending, and no fact awaits a different host.

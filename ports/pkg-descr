@@ -1,0 +1,18 @@
+Sakura is a lightweight TUI display manager built exclusively for FreeBSD. It
+runs on the vt(4) console rather than under a graphical server, authenticates
+through OpenPAM, and launches X11, Wayland or plain console sessions.
+
+Because it targets one platform, it talks to it directly: shutdown and reboot go
+through reboot(2), virtual-terminal switching and the keyboard LEDs through
+consio and kbio ioctls, and battery status through a sysctl MIB. No helper
+binaries, no session bus and no login-manager framework are involved.
+
+Its distinguishing feature is an animated GIF wallpaper rendered onto the text
+console using quadrant and shade glyphs, which every stock FreeBSD console font
+already provides. Seven other backgrounds ship with it, including a Lua-scripted
+one, and the login box, colours, corner widgets and key bindings are all
+configurable.
+
+Sakura is the login layer of the Sakura desktop, alongside the hikari-sakura
+compositor and the Sofi shell, but depends on neither and will launch any
+session another display manager would.
