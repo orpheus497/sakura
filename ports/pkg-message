@@ -1,0 +1,51 @@
+[
+{ type: install
+  message: <<EOM
+Sakura is installed but will not start until you point a virtual terminal at
+it. Both steps below have a ready-made snippet in %%PREFIX%%/etc/sakura.
+
+1. Append the "sakura" entry to /etc/gettytab:
+
+     cat %%PREFIX%%/etc/sakura/gettytab.example >> /etc/gettytab
+
+2. Replace the ttyv1 line in /etc/ttys with the one in ttys.example, so
+   init(8) starts getty(8) with that entry:
+
+     ttyv1  "/usr/libexec/getty sakura"  xterm  onifexists  secure
+
+3. Apply the change:
+
+     kill -HUP 1
+
+Sakura then owns virtual terminal 2 (/dev/ttyv1), reachable with Alt-F2.
+
+Before rebooting, keep a second virtual terminal with a normal getty on it and
+confirm you can still log in there. A mistake in /etc/ttys can otherwise leave
+the machine with no way to log in, recoverable only from single-user mode.
+
+Configuration is %%PREFIX%%/etc/sakura/config.ini, which documents every
+option in place; config.ini.example is a pristine copy. Check a configuration
+before relying on it:
+
+     sakura --validate-config %%PREFIX%%/etc/sakura/config.ini
+
+The wallpaper needs no font work: every console font FreeBSD ships already has
+the block glyphs it draws with.
+EOM
+}
+{ type: remove
+  message: <<EOM
+Sakura is removed, but /etc/ttys and /etc/gettytab still reference it.
+
+Restore the ttyv1 line in /etc/ttys to its stock form:
+
+     ttyv1  "/usr/libexec/getty Pc"  xterm  onifexists  secure
+
+then run "kill -HUP 1". The "sakura" block in /etc/gettytab is inert once
+nothing references it and can be left or removed.
+
+Doing this BEFORE rebooting matters: init(8) will otherwise keep trying to
+start a program that is no longer installed on that terminal.
+EOM
+}
+]

@@ -1,0 +1,39 @@
+bin/sakura
+bin/sakura_wrapper
+@sample etc/pam.d/sakura.sample
+@sample etc/pam.d/sakura-autologin.sample
+@sample etc/sakura/config.ini.sample
+@sample etc/sakura/setup.sh.sample
+@sample etc/sakura/startup.sh.sample
+etc/sakura/config.ini.example
+etc/sakura/example.dur
+etc/sakura/example.lua
+etc/sakura/gettytab.example
+etc/sakura/pixel_sakura.gif
+etc/sakura/ttys.example
+etc/sakura/custom-sessions/README
+etc/sakura/lang/ar.ini
+etc/sakura/lang/bg.ini
+etc/sakura/lang/cat.ini
+etc/sakura/lang/cs.ini
+etc/sakura/lang/de.ini
+etc/sakura/lang/en.ini
+etc/sakura/lang/eo.ini
+etc/sakura/lang/es.ini
+etc/sakura/lang/fr.ini
+etc/sakura/lang/it.ini
+etc/sakura/lang/ja_JP.ini
+etc/sakura/lang/ku.ini
+etc/sakura/lang/lv.ini
+etc/sakura/lang/pl.ini
+etc/sakura/lang/pt.ini
+etc/sakura/lang/pt_BR.ini
+etc/sakura/lang/ro.ini
+etc/sakura/lang/ru.ini
+etc/sakura/lang/sr.ini
+etc/sakura/lang/sr_Cyrl.ini
+etc/sakura/lang/sv.ini
+etc/sakura/lang/tr.ini
+etc/sakura/lang/uk.ini
+etc/sakura/lang/zh_CN.ini
+etc/sakura/lang/zh_TW.ini

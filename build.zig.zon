@@ -22,5 +22,18 @@
         "install.zig",
         "src",
         "res",
+        // Both path dependencies must be listed here or the packaged copy does
+        // not build. Their subpaths are named individually rather than listing
+        // the directories, because .paths does not honour .gitignore and would
+        // otherwise sweep in .zig-cache/ and the vendored zig-pkg/ trees.
+        "sakura-ui/build.zig",
+        "sakura-ui/build.zig.zon",
+        "sakura-ui/src",
+        "sakura-core/build.zig",
+        "sakura-core/build.zig.zon",
+        "sakura-core/src",
+        "tools",
+        "license.md",
+        "readme.md",
     },
 }

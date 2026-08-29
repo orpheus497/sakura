@@ -1,23 +1,176 @@
 # TODOS
 
-Last updated: 2026-08-24 10:17
+Last updated: 2026-08-29 09:39
 
-**All items are closed.** Every entry below is historical. Per-item results are indexed in
-the BLUEPRINT §8 implementation registry.
+**ACTIVE LIST EMPTY — all 23 v1 items implemented 2026-08-29 (D-013).**
 
-Source: USER/DEVELOPER request 2026-08-24 — *"make sure all documentation and details have
-been completely updated to the new branding and focus"*, followed by *"be more
-comprehensive and detailed"*.
+Group **P** (packaging, P1–P9) and Group **V** (documentation, V1–V14) were executed in
+full. Per-item results are in the BLUEPRINT §8 implementation registry; the original
+findings are retained below as the evidence record.
 
-Findings below come from the audit recorded in DECISIONS_LOG D-001. Each carries the
-evidence that established it. Questions tabled under each item are for USER resolution
-before that item is scoped into PLANS.md.
+**Zero open questions.** Every question this backlog ever carried is closed — see
+DECISIONS_LOG **D-012**. Do not re-table D-005, D-009 Q1, D-010 Q1, D-011 Q1, P6 Q1, or the
+stock-font question.
+
+*(The count read "19" from 2026-08-29 08:54 until corrected; the list held 22 at that
+point, and V14 was added at 09:21.)*
+
+| Item | Disposition |
+| --- | --- |
+| P1 | ✅ `.paths` fixed — **as subpaths**, not directories; see D-013 finding 1 |
+| P2 | ✅ `ports/` created: `Makefile`, `pkg-descr`, `pkg-plist`, `pkg-message` |
+| P3 | ✅ `pkg-plist` derived from `install.zig` — 14 entries + 25 locales |
+| P4 | ✅ gettytab/ttys steps now in `pkg-message`, plus a removal message |
+| P5 | ✅ Build-options table in the readme, all nine options |
+| P6 | ✅ Dependencies split build/runtime/session/optional. Q1 answered: `pkgconf` required |
+| P7 | ✅ **Reversed by USER (D-013): NOT tracked.** The port uses distfiles; added to `.gitignore` |
+| P8 | ✅ `create_vendor_tarball.sh` given its header and scoped as an offline convenience |
+| P9 | ✅ LuaJIT and the second `translate_c` both named in `ports/Makefile`'s `ZIG_TUPLE` |
+| V1 | ✅ 94/94 options covered — 75 named verbatim, 19 by prefix rows |
+| V2–V8 | ✅ Autologin, keys + vi mode, corner widgets, custom binds, appearance, language, clock/status, sessions |
+| V9 | ✅ Command-line reference table |
+| V10 | ✅ Troubleshooting section, including `/etc/ttys` recovery |
+| V11 | ✅ `example.lua`, `example.dur` and `custom-sessions/README` signposted as references |
+| V12 | ✅ `res/config.ini` autologin comment now tokenised, so it expands correctly |
+| V13 | ✅ `main.zig` `--config` help text corrected |
+| V14 | ✅ Console-font section leads with "no font build needed" and the stock-font table |
+
+Source of the active work: USER/DEVELOPER request 2026-08-29 — *"analyse all the user
+facing docs and explanations and guides and the code to ensure that everything is
+comprehensive and detailed for users to understand how to use and configure and customise
+this display manager"*, and *"ensure the pkgconfig is going to get all dependencies and
+install everything as a whole"*. Goal clarified by USER as **`pkg install sakura`**.
+
+Source of the historical work: USER/DEVELOPER request 2026-08-24 — *"make sure all
+documentation and details have been completely updated to the new branding and focus"*,
+followed by *"be more comprehensive and detailed"*.
 
 ---
 
 ## ACTIVE LIST
 
-*(empty — all approved work complete)*
+**Standing constraints on every item (D-011).** Nothing is deleted. No tag is created.
+`sakura_version` and `build.zig.zon`'s `.version` are not touched. No new documentation
+folder. `res/config.ini` edits are comment-only.
+
+### Group P — Packaging · `pkg install sakura`
+
+**P1. `build.zig.zon` `.paths` omits both path dependencies.** The list names `src` and
+`res` but not `sakura-ui` or `sakura-core`, which the same file declares as path
+dependencies — so the release copy of Sakura does not build. `license.md` is absent too,
+which BSD 2-Clause does not permit for a redistribution.
+*Evidence:* `zig fetch --debug-hash .` emits 92 files, none from either folder; a tree
+rebuilt from exactly the declared paths fails `unable to open '…/sakura-ui': FileNotFound`.
+*Blocks P2–P5.*
+
+**P2. No FreeBSD port exists.** No `Makefile`, `pkg-descr`, `pkg-plist`, `pkg-descr` or
+`distinfo` anywhere in the tree. Installation is source-only.
+*USER ruling:* the port lives in this repository, in `ports/`.
+
+**P3. `pkg-plist` has to be derived from `install.zig`.** 14 entries plus 25 locale files;
+the verified table is BLUEPRINT §5.
+
+**P4. Post-install instructions have no package carrier.** `install.zig:56-67` prints the
+`/etc/gettytab` and `/etc/ttys` steps to the screen. A package install shows nobody, and
+without them Sakura is installed but never runs. They belong in `pkg-message`; the printed
+copy stays for source installs.
+
+**P5. `-Ddest_directory` is undocumented.** It is the staging mechanism a port build
+depends on, it works, and it appears nowhere in the readme. Same for `-Dname`,
+`-Denable_x11_support` and `-Dfallback_tty`.
+
+**P6. The `pkg install` line is not a dependency specification.** `readme.md:116` mixes
+build, runtime and X11-only packages. `git` is used only for the version string;
+`xorg`/`xorg-xauth` only for X11 sessions; `python3` is missing though the console-font
+workflow needs it.
+- Q1 — **ANSWERED 2026-08-29, no longer open (D-012).** `pkgconf` **is** required when
+  `-Denable_x11_support` is on. Verified on this host: `pkgconf --modversion xcb` → `1.17.0`,
+  `--cflags --libs xcb` → `-I/usr/local/include -L/usr/local/lib -lxcb`, with `xcb.pc` in
+  `/usr/local/libdata/pkgconfig`. Write it into the build-dependency list as fact.
+
+**P7. `vendor.tar.zst` is gitignored.** USER ruling: track it, so the port builds offline.
+
+**P8. `create_vendor_tarball.sh` is undocumented.** One line, no `Script function and
+purpose:` header, referenced by no document and no build step. It is the offline-distfile
+mechanism.
+
+**P9. LuaJIT is a lazy transitive dependency named in no manifest.** It arrives beneath
+`zlua`. BLUEPRINT §3 records it correctly; a packager reading `build.zig.zon` alone will
+under-specify the distfiles.
+
+### Group V — User-facing documentation
+
+**V1. 25 of 94 settings appear in the readme.** ~17 more are covered by prefix rows
+(`doom_*`, `cmatrix_*`, `colormix_*`, `gameoflife_*`, `dur_*`). About **52 are documented
+only inside `res/config.ini`**, which can only be read after installing.
+
+**V2. Autologin is undocumented.** Sakura installs a dedicated PAM policy
+(`res/pam.d/sakura-autologin`) for a feature the readme never mentions.
+`auto_login_user`, `auto_login_session`, `auto_login_service`.
+
+**V3. The vi keys are written down nowhere.** Not the readme, not `config.ini`. They are
+`I` to start typing, `Esc` to stop, `H`/`L` to move — `main.zig:1283-1284` and `:589-590`.
+A user who sets `vi_mode = true` cannot find out how to type.
+
+**V4. The corner widgets are undocumented.** `corner_top_left` … `corner_bottom_right`,
+`custom_bind_width`. Clock, battery, TTY, version, lock states and custom labels, in any
+corner, stacked or side by side. The largest customisation surface in the program.
+
+**V5. Custom binds and labels are undocumented.** `[cmd:F8]` and `[lbl:name]` sections and
+the `$lang_key` substitution, documented only at the bottom of `config.ini`.
+
+**V6. Appearance settings are undocumented.** `bg`, `fg`, `border_fg`, `error_bg/fg`,
+`box_title`, `box_position_h/v`, `margin_box_h/v`, `blank_box`, `hide_borders`,
+`edge_margin`, `text_in_center`, `input_len`, `asterisk`, `full_color`.
+
+**V7. Nothing says how to change the language.** 25 translations install; `lang` is never
+mentioned.
+
+**V8. Clock, status and session behaviour undocumented.** `clock`, `bigclock*`,
+`battery_sysctl`, `custom_sessions`, `session_log`, `save_file_dir`, `type_username`,
+`allow_empty_password`, `auth_fails`, `service_name`, `login_cmd`, `logout_cmd`,
+`inactivity_cmd`, `inactivity_delay`, `x_cmd`, `xauth_cmd`.
+
+**V9. No command-line reference.** Four options exist (`main.zig:160-164`); two are
+explained in prose and never listed together.
+
+**V10. No troubleshooting section.** Nothing on login failing, a blank or garbled console,
+block characters rendering as boxes, a session quitting straight back to the login screen,
+or recovering a machine after breaking `/etc/ttys`. That last warning exists only in
+`contributing.md`, where users will not see it.
+
+**V11. The Lua API reference is not signposted.** `res/example.lua`'s header is a complete
+reference — the `sakura` table, `putCell`/`putRect`/`putLabel`/`clock`, the required
+`draw()`, the available libraries. The readme calls it "a starting point". Same for
+`res/custom-sessions/README`.
+
+**V12. `res/config.ini:65-66` sends autologin users to Linux paths.** The comment names
+`/usr/share/xsessions/` and `/usr/share/wayland-sessions/`. Sakura's own defaults are
+`$PREFIX_DIRECTORY/share/…` → `/usr/local/share/…` (`:451`, `:475`). Not tokenised, so
+install-time substitution does not repair them. Same root cause as closed item B2 and the
+permanent hazard in BLUEPRINT §5; `check_invariants.py` compares keys only and cannot see
+comment text.
+
+**V13. `--config` help text names the wrong directory.** `main.zig:163` gives
+`/usr/local/share/sakura`; it is `/usr/local/etc/sakura`.
+
+**V14. The readme implies a font build is required for the wallpaper. It is not.** Verified
+2026-08-29 (D-012): every stock FreeBSD vt font — `spleen-12x24`, `spleen-16x32`,
+`spleen-8x16`, `gallant`, `terminus-b32` — already carries all 18 glyphs `Gif.zig` emits
+(5 halves/full, 10 quadrants, 3 shades). The wallpaper works out of the box with no
+`vidfont` change at all. The "Console font" section must say so first, and reframe
+`tools/mkvtfont.py` as the path for using *your own* font. This removes the single largest
+piece of apparent setup friction in the project.
+
+---
+
+## ANSWERED — Python provenance (D-011)
+
+USER asked which Python is project work and which was agent-created. Answered in full in
+DECISIONS_LOG D-011. Summary: `res/lang/normalize_lang_files.py` is upstream Ly
+(Moritz Reinel, 2024-10-12); `tools/mkvtfont.py` is project work added with the wallpaper
+in the rebrand commit `f38fae8`; `tools/check_invariants.py` is agent-created in `4a3cdbd`.
+**No disposition taken — nothing is deleted.**
 
 ---
 

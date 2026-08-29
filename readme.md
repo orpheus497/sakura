@@ -89,46 +89,65 @@ Setting the desktop up from Sakura's side is covered in
 
 ## Dependencies
 
-- Compile-time:
-  - zig 0.16.x (you must use a **release version** of zig; check that
-    `zig version` does not have a `-dev*` suffix)
+Sakura itself needs very little. Shutdown, reboot, virtual terminal switching
+and the keyboard LEDs are all handled in-process through FreeBSD system calls,
+so none of them pulls in a helper binary. Most of the list below exists for
+sessions you might launch, not for Sakura.
 
-  - libc and OpenPAM (both part of the FreeBSD base system)
+**Build:**
 
-  - xcb (optional, required by default; needed for X11 support)
+| Package | Why |
+| --- | --- |
+| `zig` | 0.16.x, and it must be a **release** build — check that `zig version` has no `-dev` suffix |
+| `libxcb` | Only with X11 support, which is on by default. Turn it off with `-Denable_x11_support=false` |
+| `pkgconf` | Only with X11 support. Zig resolves `xcb` through pkg-config, and `xcb.pc` lives in `/usr/local/libdata/pkgconfig` |
+| `ca_root_nss` | So Zig can fetch its dependencies over HTTPS |
+| `git` | **Optional.** Used only to derive the version string. Without it, Sakura reports the version compiled into `build.zig` |
 
-- Runtime (with the default configuration):
-  - xorg
+libc and OpenPAM come from the base system, so there is nothing to install for
+either.
 
-  - xorg-xauth
+**Runtime:** nothing, for Sakura itself. The base system's `backlight(8)`
+backs the brightness keybinds, and that is already present.
 
-  - `backlight(8)` (part of the base system, used for the brightness keybinds)
+**For the sessions you run:**
 
-- Optional:
-  - otf2bdf, only if you want to build a console font with `tools/mkvtfont.py`
-    (`pkg install otf2bdf`; `vtfontcvt` is already in base)
+| Package | Why |
+| --- | --- |
+| `xorg` | Only to run X11 sessions |
+| `xauth` | Only to run X11 sessions |
 
-Everything else Sakura needs — shutdown, reboot, virtual terminal switching and
-the keyboard LEDs — is handled in-process through FreeBSD system calls, so no
-helper binaries are required for those.
+**Optional tools:**
 
+| Package | Why |
+| --- | --- |
+| `python3`, `otf2bdf` | Only to build a console font from your own typeface with `tools/mkvtfont.py`. `vtfontcvt` is already in base. You do **not** need this for the wallpaper — see [Console font](#console-font) |
+
+So a build with X11 support needs:
+
+```sh
+# pkg install zig pkgconf libxcb ca_root_nss
 ```
-# pkg install zig git libxcb xorg xorg-xauth ca_root_nss
+
+and, if you intend to run X11 sessions:
+
+```sh
+# pkg install xorg xauth
 ```
 
 ## Building
 
-```
-$ git clone https://github.com/orpheus497/sakura.git sakura
-$ cd sakura
-$ zig build
+```sh
+git clone https://github.com/orpheus497/sakura.git sakura
+cd sakura
+zig build
 ```
 
 After building, you can (optionally) test Sakura in a terminal emulator,
 although authentication will **not** work:
 
-```
-$ zig build run
+```sh
+zig build run
 ```
 
 > [!IMPORTANT]
@@ -142,7 +161,7 @@ $ zig build run
 
 ## Installing
 
-```
+```sh
 # zig build installexe
 ```
 
@@ -168,14 +187,46 @@ This installs:
 The defaults follow the FreeBSD ports layout (`--prefix` is `/usr/local` and
 the configuration lives under `/usr/local/etc`). Both can be overridden:
 
-```
+```sh
 # zig build installexe -Dprefix_directory=/usr/local -Dconfig_directory=/usr/local/etc
 ```
+
+### Build options
+
+All of these are passed to `zig build` as `-D<name>=<value>`. The ones marked
+*embedded* are compiled into the binary, so changing them means rebuilding, not
+just editing `config.ini`.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `dest_directory` | *(empty)* | Staging root. Every installed path is written beneath it instead of `/`. This is the `DESTDIR` equivalent a package build uses; it does not affect paths compiled into the binary |
+| `prefix_directory` | `/usr/local` | Install prefix. *Embedded* — it is also the default for `x_cmd`, `xauth_cmd`, `xsessions` and `waylandsessions` |
+| `config_directory` | `/usr/local/etc` | Configuration root. *Embedded* — it is also the default for `custom_sessions`, `save_file_dir`, `setup_cmd`, `gif_file`, `dur_file_path` and `lua_animation_file` |
+| `name` | `sakura` | Renames **only** the installed binary and its getty wrapper. The configuration directory, both PAM policies and the default `service_name` stay `sakura` |
+| `enable_x11_support` | `true` | Links `libxcb` for X11 sessions. Set `false` for a Wayland- or console-only build, which then needs neither `libxcb` nor `pkgconf` |
+| `default_tty` | `2` | The virtual terminal Sakura is installed onto. Fills in the generated `gettytab.example` and `ttys.example`. Must be 1 or greater |
+| `fallback_tty` | `2` | *Embedded.* The terminal to fall back to if the current one cannot be determined |
+| `uid_min` | `1000` | *Embedded.* Lowest UID shown in the user list |
+| `uid_max` | `32000` | *Embedded.* Highest UID shown in the user list |
+
+For example, a Wayland-only install staged into a package root:
+
+```sh
+# zig build installexe -Denable_x11_support=false -Ddest_directory=/tmp/stage
+```
+
+### Installing as a package
+
+A FreeBSD port skeleton lives in [`ports/`](ports/). It builds the same way,
+takes X11 as an on/off option, stages through `-Ddest_directory`, and ships the
+`/etc/gettytab` and `/etc/ttys` steps as a `pkg-message` so a package install
+still tells you about them. Copy it into a ports tree (as `x11/sakura`), run
+`make makesum` to generate `distinfo`, and build it normally.
 
 If another display manager is currently enabled, disable it first. For example,
 for LightDM:
 
-```
+```sh
 # service lightdm stop
 # sysrc lightdm_enable="NO"
 ```
@@ -189,7 +240,7 @@ already filled in with the paths you built with.
 
 First, append the Sakura entry to `/etc/gettytab` (see `gettytab(5)`):
 
-```
+```text
 sakura:\
 	:lo=/usr/local/bin/sakura_wrapper:\
 	:al=root:
@@ -207,13 +258,13 @@ Then point a virtual terminal at that entry in `/etc/ttys` (see `ttys(5)`).
 FreeBSD numbers virtual terminals from 1 but names their device nodes from 0,
 so virtual terminal 2 — Sakura's default — is `/dev/ttyv1`:
 
-```
+```text
 ttyv1	"/usr/libexec/getty sakura"	xterm	onifexists	secure
 ```
 
 Finally, make `init(8)` re-read the file:
 
-```
+```sh
 # kill -HUP 1
 ```
 
@@ -225,13 +276,13 @@ line instead.
 
 You can install Sakura without overriding the current configuration file:
 
-```
+```sh
 # zig build installnoconf
 ```
 
 ## Uninstalling
 
-```
+```sh
 # zig build uninstallexe
 ```
 
@@ -248,8 +299,8 @@ except where a comment says otherwise. A pristine copy is kept next to it as
 You can check the validity of your configuration file (i.e. whether there are
 any errors in it) with:
 
-```
-$ sakura --validate-config /usr/local/etc/sakura/config.ini
+```sh
+sakura --validate-config /usr/local/etc/sakura/config.ini
 ```
 
 Logs are defined by that same file:
@@ -259,11 +310,209 @@ Logs are defined by that same file:
 - The system log is at `/var/log/sakura.log` by default. If set to `null`,
   `syslog(3)` is used instead, under the `sakura` identifier.
 
-`--config` (`-c`) takes a *directory*, not a file: Sakura reads `config.ini`
-inside it, along with `lang/` and the save file. Without it, that directory is
-`/usr/local/etc/sakura`, so the configuration is
-`/usr/local/etc/sakura/config.ini`. Note that `--validate-config` differs — it
-takes the path of the file itself.
+### Command-line options
+
+| Option | Argument | What it does |
+| --- | --- | --- |
+| `-h`, `--help` | — | List the options and exit |
+| `-v`, `--version` | — | Print the version and exit |
+| `-c`, `--config` | a **directory** | Read the configuration from there instead of `/usr/local/etc/sakura`. Sakura looks inside it for `config.ini`, `lang/` and the save file |
+| `--validate-config` | a **file** | Check a configuration file for errors and exit |
+
+The two path options differ deliberately: `--config` points at a directory
+because Sakura needs the language files and the save file alongside the
+configuration, while `--validate-config` checks one named file.
+
+### Choosing a language
+
+Twenty-five translations are installed to `/usr/local/etc/sakura/lang/`. Pick
+one by its file name without the extension:
+
+```ini
+lang = de
+```
+
+Available: `ar`, `bg`, `cat`, `cs`, `de`, `en`, `eo`, `es`, `fr`, `it`,
+`ja_JP`, `ku`, `lv`, `pl`, `pt`, `pt_BR`, `ro`, `ru`, `sr`, `sr_Cyrl`, `sv`,
+`tr`, `uk`, `zh_CN`, `zh_TW`.
+
+Editing one of those files changes any string in the interface. The keys are
+also what `$name` substitution in custom binds refers to.
+
+### Autologin
+
+Sakura can log a user straight in without a password prompt. It installs a
+dedicated PAM policy for this at `/usr/local/etc/pam.d/sakura-autologin`, which
+uses `pam_permit`.
+
+```ini
+auto_login_user = alice
+auto_login_session = hikari
+```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `auto_login_user` | `null` | The account to log in. `null` disables autologin |
+| `auto_login_session` | `null` | Which session to start. `null` disables autologin |
+| `auto_login_service` | `sakura-autologin` | The PAM policy to authenticate against |
+
+Both `auto_login_user` and `auto_login_session` must be set; leaving either
+`null` disables the feature. For the session name, use a `.desktop` file's name
+without the extension, its `Name` field, or its `DesktopNames` value — the
+files are in `/usr/local/share/xsessions/` and
+`/usr/local/share/wayland-sessions/`.
+
+> [!WARNING]
+> Autologin means anyone with physical access has that user's session without
+> authenticating. The default PAM policy permits the login unconditionally.
+
+### Appearance
+
+Colours are `0xSSRRGGBB`, where `SS` is a style byte. The vt(4) console has
+sixteen colours, so values are mapped onto the nearest one rather than shown
+literally — `config.ini` explains the mapping in place.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `bg` | `0x00FFFFFF` | Background colour |
+| `fg` | `0x20000000` | Foreground (text) colour |
+| `border_fg` | `0x20000000` | Colour of the login box border |
+| `error_bg` | `0x00FFFFFF` | Background of the error line |
+| `error_fg` | `0x01FF0000` | Foreground of the error line |
+| `box_title` | `sakura` | Text in the box's top border. `null` for none |
+| `box_position_h` | `0.30` | Horizontal position, 0.0–1.0, measured from the **left** |
+| `box_position_v` | `0.62` | Vertical position, 0.0–1.0, measured from the **top** |
+| `margin_box_h` | `2` | Horizontal padding inside the box |
+| `margin_box_v` | `1` | Vertical padding inside the box |
+| `blank_box` | `true` | Clear the wallpaper behind the box so text stays readable |
+| `hide_borders` | `false` | Draw no border at all |
+| `edge_margin` | `0` | Cells kept clear at the screen edge |
+| `text_in_center` | `false` | Centre the field labels rather than left-aligning them |
+| `input_len` | `34` | Visible width of the input fields |
+| `asterisk` | `*` | Character masking the password. `null` shows nothing at all |
+| `full_color` | `true` | Use all sixteen console colours rather than the eight-colour subset |
+
+`box_position_h` and `box_position_v` are measured from the top-left, so larger
+values move the box right and down. The shipped default sits the box clear of
+the wallpaper's branch.
+
+### Corner widgets
+
+The four screen corners each hold a list of small readouts. This is the largest
+customisation surface Sakura has, and the defaults only use a fraction of it.
+
+```ini
+corner_top_left = shutdown,restart,britup,britdown,password battery
+corner_top_right = clock numlock,capslock
+corner_bottom_left = version
+corner_bottom_right = labels
+```
+
+The syntax is two levels: **commas** place entries side by side on one line, and
+**spaces** start a new line. So the default top-left corner is two lines — the
+four key hints and the password hint sharing the first, and the battery on the
+second.
+
+| Name | Shows |
+| --- | --- |
+| `shutdown` | The shutdown key hint |
+| `restart` | The restart key hint |
+| `britup` | The brightness-up key hint |
+| `britdown` | The brightness-down key hint |
+| `password` | The show-password key hint |
+| `clock` (or `time`) | The current time, formatted by `clock` |
+| `tty` | Which virtual terminal Sakura is on |
+| `battery` | Charge level, if `battery_sysctl` is set |
+| `version` | Sakura's version |
+| `numlock` | Num Lock state |
+| `capslock` | Caps Lock state |
+| `labels` | Your own `[lbl:...]` labels — see below |
+
+`custom_bind_width` sets the column width used to lay these out; `null` sizes
+them automatically.
+
+### Custom commands and labels
+
+Two extra section types let you bind your own commands and put your own text on
+the login screen. Both go at the end of `config.ini`.
+
+A **command** binds a shell command to a key:
+
+```ini
+[cmd:F8]
+cmd = touch /tmp/sakura.gaming
+name = gaming mode
+```
+
+The `name` is what appears in the corner hints. Writing `$key` in it substitutes
+a string from the current language file — for instance `$brightness_up` gives
+whatever that locale calls brightness up. Any key in a `lang/*.ini` file works.
+
+A **label** runs a command and displays its output:
+
+```ini
+[lbl:kernel]
+cmd = uname -srn
+refresh = 0
+```
+
+The identifier after `lbl:` must be unique. `refresh` is how many frames to
+wait before re-running the command; `0` runs it once and leaves the result. To
+see labels at all, one of the corners must list `labels`.
+
+### Clock and status
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `clock` | `null` | `strftime(3)` format for the corner clock, e.g. `%H:%M`. `null` hides it |
+| `bigclock` | `none` | A large clock drawn above the box: `none`, `en` or `fa` |
+| `bigclock_12hr` | `false` | Twelve-hour big clock |
+| `bigclock_seconds` | `false` | Show seconds on the big clock |
+| `battery_sysctl` | `null` | The sysctl MIB holding battery charge, e.g. `hw.acpi.battery.life`. `null` hides the battery readout |
+| `numlock` | `false` | Turn Num Lock on at startup |
+
+### Sessions and behaviour
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `xsessions` | `/usr/local/share/xsessions` | Where to look for X11 `.desktop` files. Colon-separated for several |
+| `waylandsessions` | `/usr/local/share/wayland-sessions` | Same, for Wayland |
+| `custom_sessions` | `/usr/local/etc/sakura/custom-sessions` | Session entries visible only to Sakura |
+| `shell` | `true` | Offer a plain shell session |
+| `xinitrc` | `~/.xinitrc` | Offer an xinitrc session. `null` hides it |
+| `default_input` | `login` | Which field is focused at startup: `info_line`, `session`, `login` or `password` |
+| `type_username` | `false` | Type the username freely instead of choosing from a list |
+| `allow_empty_password` | `true` | Permit accounts with no password |
+| `auth_fails` | `10` | Failed attempts before Sakura pauses |
+| `clear_password` | `false` | Clear the password field after a failed attempt |
+| `service_name` | `sakura` | PAM policy used for normal logins |
+| `path` | *(see `config.ini`)* | `PATH` set for the session. `null` leaves it alone |
+| `save_file_dir` | `/usr/local/etc/sakura` | Where the last-used user and session are remembered |
+| `session_log` | `.local/state/sakura-session.log` | Session output log, relative to the user's home |
+| `sakura_log` | `/var/log/sakura.log` | Sakura's own log. `null` uses `syslog(3)` under the `sakura` identifier |
+| `initial_info_text` | `null` | Text shown on the info line at startup |
+| `start_cmd` | `null` | Runs before the terminal is taken over. The shipped file sets this to `startup.sh` |
+| `setup_cmd` | `/usr/local/etc/sakura/setup.sh` | Sets up the shell environment after login |
+| `login_cmd` | `null` | Runs on every successful login |
+| `logout_cmd` | `null` | Runs on every logout |
+| `inactivity_cmd` | `null` | Runs after `inactivity_delay` seconds with no input |
+| `inactivity_delay` | `0` | Seconds of inactivity before `inactivity_cmd`. `0` disables it |
+| `x_cmd` | `/usr/local/bin/X` | The X server binary |
+| `xauth_cmd` | `/usr/local/bin/xauth` | The xauth binary |
+| `x_vt` | `null` | Virtual terminal handed to the X server. `null` uses the current one. Does not apply to Wayland |
+
+### Writing your own animations and sessions
+
+Three files installed alongside the configuration are complete references, not
+just samples:
+
+- `/usr/local/etc/sakura/example.lua` — its header documents the whole Lua
+  animation API: the `sakura` table, `putCell`, `putRect`, `putLabel` and
+  `clock`, the `draw()` function you must define, and which standard libraries
+  are available. Point `lua_animation_file` at your own script.
+- `/usr/local/etc/sakura/example.dur` — the default `dur_file` animation.
+- `/usr/local/etc/sakura/custom-sessions/README` — every desktop-entry key
+  Sakura understands, for hand-written session entries.
 
 ### Migrating from Ly
 
@@ -363,6 +612,13 @@ all still available, each with its own `config.ini` options:
 that a `.dur` file saved with a 256-colour range will not draw while
 `full_color` is off.
 
+Two options apply to whichever animation you choose:
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `animation_frame_delay` | `5` | Delay between frames, in milliseconds. Higher is slower and cheaper |
+| `animation_timeout_sec` | `0` | Stop animating after this many seconds and leave the last frame on screen. `0` never stops |
+
 > [!IMPORTANT]
 > `gif_font_aspect` must match your console font or the image will look
 > stretched. Set it to the cell's height divided by its width: `2.0` for an
@@ -374,11 +630,33 @@ gives 120x37 cells, 12x24 gives 160x50, and 8x16 gives 240x75 — each step
 roughly doubling the resolution at the cost of smaller text. The shipped
 defaults are tuned for 12x24:
 
-```
+```sh
 # sysrc allscreens_flags="-f /usr/share/vt/fonts/spleen-12x24.fnt"
 ```
 
 ## Console font
+
+**You do not need to build a font.** The FreeBSD console fonts below each
+contain all eighteen glyphs the wallpaper draws with, so the wallpaper renders
+correctly on a stock install with any of them:
+
+| Font | Cell | Wallpaper glyphs |
+| --- | --- | --- |
+| `spleen-8x16` | 8x16 | all 18 |
+| `spleen-12x24` | 12x24 | all 18 |
+| `spleen-16x32` | 16x32 | all 18 |
+| `gallant` | 12x22 | all 18 |
+| `terminus-b32` | 16x32 | all 18 |
+
+Picking one of those is the whole of the setup, and the only reason to choose
+between them is the resolution trade-off described above:
+
+```sh
+# sysrc allscreens_flags="-f /usr/share/vt/fonts/spleen-12x24.fnt"
+```
+
+The rest of this section is for using **your own** typeface on the console
+instead, which is optional.
 
 vt(4) only loads bitmap fonts, so a scalable font has to be rasterised first.
 `tools/mkvtfont.py` does that, and also fixes up the two things that would
@@ -387,7 +665,9 @@ otherwise spoil the wallpaper: `vtfontcvt` rejects the zero-sized glyphs
 tile the character cell exactly, which bands the image. The block elements are
 synthesised at the exact cell size instead.
 
-```
+It needs `python3` and `otf2bdf`; `vtfontcvt` is in the base system.
+
+```sh
 $ python3 tools/mkvtfont.py -p 11 -o sakura-console.fnt \
     /usr/local/share/fonts/nerd-fonts/Hurmit/HurmitNerdFontMono-Regular.otf
 # cp sakura-console.fnt /usr/share/vt/fonts/
@@ -395,7 +675,7 @@ $ python3 tools/mkvtfont.py -p 11 -o sakura-console.fnt \
 
 Load it for the current session, or for every terminal at boot:
 
-```
+```sh
 # vidcontrol -f /usr/share/vt/fonts/sakura-console.fnt < /dev/ttyv1
 # sysrc allscreens_flags="-f /usr/share/vt/fonts/sakura-console.fnt"
 ```
@@ -415,6 +695,40 @@ Use the Up/Down arrow keys to change the current field, and the Left/Right
 arrow keys to scroll through the different values (whether it be the info line,
 the desktop environment, or the username). The info line is where messages and
 errors are displayed.
+
+| Key | Action | Option |
+| --- | --- | --- |
+| Up / Down | Move between the session, username and password fields | — |
+| Left / Right | Scroll through values in the current field | — |
+| Enter | Log in | — |
+| F1 | Shut down | `shutdown_key` |
+| F2 | Restart | `restart_key` |
+| F5 | Brightness down | `brightness_down_key`, runs `brightness_down_cmd` |
+| F6 | Brightness up | `brightness_up_key`, runs `brightness_up_cmd` |
+| F7 | Toggle the password mask on and off | `show_password_key` |
+| Ctrl+C | Quit (only useful when testing in a terminal) | — |
+
+Any of those key options may be set to `null` to unbind it, or to another key
+name to move it. You can add your own with `[cmd:KEY]` sections — see
+[Custom commands and labels](#custom-commands-and-labels).
+
+### vi mode
+
+Setting `vi_mode = true` adds a modal layer over the above, for people who
+would rather not leave the home row. It starts in the mode named by
+`vi_default_mode` (`normal` or `insert`).
+
+| Key | Action |
+| --- | --- |
+| `I` | Enter insert mode — type into the current field |
+| `Esc` | Return to normal mode |
+| `J` | Move down a field (same as Down) |
+| `K` | Move up a field (same as Up) |
+| `H` | Scroll left through the current field's values (same as Left) |
+| `L` | Scroll right through the current field's values (same as Right) |
+
+In normal mode the letter keys move rather than type, so if the username field
+seems to ignore your typing, you are in normal mode: press `I` first.
 
 ## Sessions
 
@@ -503,7 +817,7 @@ page:
 
 A typical shebang for a shell script looks like this:
 
-```
+```sh
 #!/bin/sh
 ```
 
@@ -530,6 +844,96 @@ A typical shebang for a shell script looks like this:
 - `/usr/local/etc/sakura/startup.sh` runs before Sakura takes control of the
   terminal, which is a good place for `vidcontrol(1)` tweaks such as loading a
   larger console font.
+
+## Troubleshooting
+
+### I cannot log in, but the password is right
+
+Check `/var/log/sakura.log`. Authentication goes through OpenPAM, so a policy
+problem shows up there rather than on screen.
+
+Note that OpenPAM does **not** support the `-` prefix on module lines that
+Linux-PAM allows. A policy copied from a Linux system will fail to load.
+
+If `allow_empty_password` is `false`, an account with no password is refused
+even when you enter nothing correctly.
+
+### The screen is blank, or the login box is missing
+
+Sakura only draws on the virtual terminal it was installed onto — terminal 2,
+`/dev/ttyv1`, unless you changed `default_tty`. Try Alt-F2.
+
+If the terminal is right but nothing appears, another display manager may still
+be enabled and holding it. Stop and disable it, then `kill -HUP 1`.
+
+### Block characters show as empty boxes or question marks
+
+The console font has no glyphs for them. The fonts listed under
+[Console font](#console-font) all do, so this means some other font is loaded:
+
+```sh
+# sysrc allscreens_flags="-f /usr/share/vt/fonts/spleen-12x24.fnt"
+```
+
+If you built the font yourself, rebuild it with `tools/mkvtfont.py`, which
+synthesises the block elements at the exact cell size.
+
+### The wallpaper looks banded or striped
+
+The font's block elements do not tile the character cell exactly. Use a stock
+font, or rebuild yours with `tools/mkvtfont.py`.
+
+### The session quits straight back to the login screen
+
+The session's own log is `~/.local/state/sakura-session.log`, and it usually
+names the failure directly. Common causes: the `.desktop` file's `Exec` line
+points at something not installed, or a Wayland compositor could not get an
+`XDG_RUNTIME_DIR`.
+
+### My desktop environment is not in the list
+
+Sakura reads the session directories once at startup, so a newly installed
+environment appears only after it restarts — log out or reboot.
+
+If it is still missing, check that a `.desktop` file exists in
+`/usr/local/share/xsessions` or `/usr/local/share/wayland-sessions`. If there
+is none, write one in `/usr/local/etc/sakura/custom-sessions`; the `README`
+there lists the supported keys.
+
+### Sakura will not start after I edited the configuration
+
+```sh
+sakura --validate-config /usr/local/etc/sakura/config.ini
+```
+
+If the binary was renamed at build time with `-Dname`, run it under that name
+instead; only the executable is renamed, so the configuration path is
+unchanged.
+
+`config.ini.example` next to it is a pristine copy to compare against or
+restore from.
+
+### I broke /etc/ttys and cannot log in at all
+
+This is the one mistake that can lock you out of the machine, because
+`/etc/ttys` decides whether *any* terminal gets a login prompt.
+
+Boot into single-user mode from the loader menu, then:
+
+```sh
+# mount -u -o rw /
+# mount -a
+# ee /etc/ttys
+```
+
+Restore the line to its stock form and reboot:
+
+```text
+ttyv1  "/usr/libexec/getty Pc"  xterm  onifexists  secure
+```
+
+To avoid needing this: before rebooting, always leave at least one other
+virtual terminal running an ordinary `getty` and confirm you can log in on it.
 
 ## Credits
 

@@ -5,3 +5,4 @@ valgrind.log
 .zig-cache
 zig-pkg
 __pycache__/
+vendor.tar.zst
