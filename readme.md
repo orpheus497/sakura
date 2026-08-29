@@ -115,7 +115,7 @@ backs the brightness keybinds, and that is already present.
 | Package | Why |
 | --- | --- |
 | `xorg` | Only to run X11 sessions |
-| `xorg-xauth` | Only to run X11 sessions |
+| `xauth` | Only to run X11 sessions |
 
 **Optional tools:**
 
@@ -125,14 +125,14 @@ backs the brightness keybinds, and that is already present.
 
 So a build with X11 support needs:
 
-```
+```sh
 # pkg install zig pkgconf libxcb ca_root_nss
 ```
 
 and, if you intend to run X11 sessions:
 
-```
-# pkg install xorg xorg-xauth
+```sh
+# pkg install xorg xauth
 ```
 
 ## Building
@@ -211,7 +211,7 @@ just editing `config.ini`.
 
 For example, a Wayland-only install staged into a package root:
 
-```
+```sh
 # zig build installexe -Denable_x11_support=false -Ddest_directory=/tmp/stage
 ```
 
@@ -636,9 +636,9 @@ defaults are tuned for 12x24:
 
 ## Console font
 
-**You do not need to build a font.** Every console font FreeBSD ships already
-contains all eighteen glyphs the wallpaper draws with, so it renders correctly
-on a stock install:
+**You do not need to build a font.** The FreeBSD console fonts below each
+contain all eighteen glyphs the wallpaper draws with, so the wallpaper renders
+correctly on a stock install with any of them:
 
 | Font | Cell | Wallpaper glyphs |
 | --- | --- | --- |
@@ -651,7 +651,7 @@ on a stock install:
 Picking one of those is the whole of the setup, and the only reason to choose
 between them is the resolution trade-off described above:
 
-```
+```sh
 # sysrc allscreens_flags="-f /usr/share/vt/fonts/spleen-12x24.fnt"
 ```
 
@@ -868,10 +868,10 @@ be enabled and holding it. Stop and disable it, then `kill -HUP 1`.
 
 ### Block characters show as empty boxes or question marks
 
-The console font has no glyphs for them. Every font FreeBSD ships does — see
-[Console font](#console-font) — so this means a custom font is loaded:
+The console font has no glyphs for them. The fonts listed under
+[Console font](#console-font) all do, so this means some other font is loaded:
 
-```
+```sh
 # sysrc allscreens_flags="-f /usr/share/vt/fonts/spleen-12x24.fnt"
 ```
 
@@ -902,8 +902,8 @@ there lists the supported keys.
 
 ### Sakura will not start after I edited the configuration
 
-```
-$ sakura --validate-config /usr/local/etc/sakura/config.ini
+```sh
+sakura --validate-config /usr/local/etc/sakura/config.ini
 ```
 
 `config.ini.example` next to it is a pristine copy to compare against or
@@ -916,7 +916,7 @@ This is the one mistake that can lock you out of the machine, because
 
 Boot into single-user mode from the loader menu, then:
 
-```
+```sh
 # mount -u -o rw /
 # mount -a
 # ee /etc/ttys
@@ -924,7 +924,7 @@ Boot into single-user mode from the loader menu, then:
 
 Restore the line to its stock form and reboot:
 
-```
+```text
 ttyv1  "/usr/libexec/getty Pc"  xterm  onifexists  secure
 ```
 

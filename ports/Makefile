@@ -53,7 +53,7 @@ X11_VARS_OFF=		SAKURA_X11=false
 # Sakura is started by getty(8) from /etc/ttys, not by the service framework, so
 # there is no rc.d script. Power management, virtual-terminal switching and
 # keyboard LEDs all go through FreeBSD syscalls, so there are no helper-binary
-# run dependencies either. xorg and xorg-xauth are needed only by X11 sessions
+# run dependencies either. xorg and xauth are needed only by X11 sessions
 # themselves, not by Sakura, and so are deliberately not RUN_DEPENDS.
 
 # The bundled Zig installer is what places the configuration, the language
