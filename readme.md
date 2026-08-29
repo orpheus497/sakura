@@ -906,6 +906,10 @@ there lists the supported keys.
 sakura --validate-config /usr/local/etc/sakura/config.ini
 ```
 
+If the binary was renamed at build time with `-Dname`, run it under that name
+instead; only the executable is renamed, so the configuration path is
+unchanged.
+
 `config.ini.example` next to it is a pristine copy to compare against or
 restore from.
 
