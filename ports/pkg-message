@@ -27,7 +27,7 @@ Configuration is %%PREFIX%%/etc/sakura/config.ini, which documents every
 option in place; config.ini.example is a pristine copy. Check a configuration
 before relying on it:
 
-     sakura --validate-config %%PREFIX%%/etc/sakura
+     sakura --validate-config %%PREFIX%%/etc/sakura/config.ini
 
 The wallpaper needs no font work: every console font FreeBSD ships already has
 the block glyphs it draws with.

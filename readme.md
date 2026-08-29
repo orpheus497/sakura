@@ -408,10 +408,10 @@ corner_bottom_left = version
 corner_bottom_right = labels
 ```
 
-The syntax is two levels: **commas** stack entries on separate lines, and
-**spaces** place them side by side on the same line. So the default top-left
-corner is one line listing the four key hints and the password hint, with the
-battery beside it.
+The syntax is two levels: **commas** place entries side by side on one line, and
+**spaces** start a new line. So the default top-left corner is two lines — the
+four key hints and the password hint sharing the first, and the battery on the
+second.
 
 | Name | Shows |
 | --- | --- |
@@ -480,7 +480,7 @@ see labels at all, one of the corners must list `labels`.
 | `custom_sessions` | `/usr/local/etc/sakura/custom-sessions` | Session entries visible only to Sakura |
 | `shell` | `true` | Offer a plain shell session |
 | `xinitrc` | `~/.xinitrc` | Offer an xinitrc session. `null` hides it |
-| `default_input` | `login` | Which field is focused at startup: `session`, `login` or `password` |
+| `default_input` | `login` | Which field is focused at startup: `info_line`, `session`, `login` or `password` |
 | `type_username` | `false` | Type the username freely instead of choosing from a list |
 | `allow_empty_password` | `true` | Permit accounts with no password |
 | `auth_fails` | `10` | Failed attempts before Sakura pauses |
@@ -616,7 +616,7 @@ Two options apply to whichever animation you choose:
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `animation_frame_delay` | `5` | Frames to wait between updates. Higher is slower and cheaper |
+| `animation_frame_delay` | `5` | Delay between frames, in milliseconds. Higher is slower and cheaper |
 | `animation_timeout_sec` | `0` | Stop animating after this many seconds and leave the last frame on screen. `0` never stops |
 
 > [!IMPORTANT]
@@ -705,7 +705,7 @@ errors are displayed.
 | F2 | Restart | `restart_key` |
 | F5 | Brightness down | `brightness_down_key`, runs `brightness_down_cmd` |
 | F6 | Brightness up | `brightness_up_key`, runs `brightness_up_cmd` |
-| F7 | Show the password in clear text while held | `show_password_key` |
+| F7 | Toggle the password mask on and off | `show_password_key` |
 | Ctrl+C | Quit (only useful when testing in a terminal) | — |
 
 Any of those key options may be set to `null` to unbind it, or to another key

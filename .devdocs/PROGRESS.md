@@ -5,6 +5,59 @@ Most recent at top.
 
 ---
 
+## 2026-08-29 10:24 — Review findings: six fixed, one inverted on verification
+
+Seven review findings against the v1 work. Each was checked against source before acting;
+**one had its claim backwards and one turned out to be a code defect rather than a doc
+defect.**
+
+| Finding | Verified against | Action |
+| --- | --- | --- |
+| `pkg-descr` overstates "no helper binaries" | `install.zig`, `res/sakura.gettytab` | Fixed — the claim is about syscalls, but `sakura_wrapper` *is* installed and named by `/etc/gettytab`. Now says so |
+| `pkg-message` passes a directory to `--validate-config` | `main.zig:163` | Fixed — it takes a file; now `…/etc/sakura/config.ini` |
+| `default_input` missing `info_line` | `enums.zig` `Input` | Fixed — the enum is `info_line, session, login, password` |
+| F7 "while held" | `main.zig:1440` `togglePasswordMask` | Fixed — it toggles |
+| `animation_frame_delay` "frames to wait" | `res/config.ini:34` | Fixed — milliseconds |
+| Corner commas/spaces | `positionCorner` / `positionItem` | Fixed, **but the finding had it backwards** — see below |
+| Label `refresh` off-by-one | `main.zig:1845-1887` | Fixed **in code**, not docs — see below |
+
+### The finding that was inverted
+
+It asked for the docs to say spaces place entries side by side and commas stack them. The
+code does the **opposite**: `positionCorner` tokenises on spaces/tabs/brackets and bumps
+`y_offset` per token — so a space starts a new line — while `positionItem` splits a token
+on commas and advances a shared `line_x`, so commas sit side by side.
+
+My original text was wrong too, in the same direction, *and* misread the shipped default.
+`corner_top_left = shutdown,restart,britup,britdown,password battery` is **two lines**: the
+five hints on the first, `battery` on the second. Now documented as the code behaves.
+
+### The finding that was a real bug
+
+`refresh` was documented as "frames to wait", and the counter did not deliver that. The
+counter was reset to `refresh` and then decremented in the **same** pass, so `refresh = N`
+waited `N-1` frames, and `refresh = 1` fell straight to 0 and never repeated — identical to
+`refresh = 0`.
+
+The finding permitted fixing either side. Documenting it would have meant writing "N waits
+N-1, and 1 means never", i.e. publishing the bug as an interface. Fixed in
+`src/main.zig` instead by making the reset and the tick mutually exclusive
+(`else if`), which is a four-line change that leaves `refresh = 0` running exactly once as
+before. The stale comment above it was rewritten, which is in scope under D-005 because the
+task already required editing that logic.
+
+**This is the session's only change to runtime behaviour.** `zig ast-check src/main.zig`
+passes, but that is parse-and-AST only — **it has not been compiled or run**, and it needs
+`zig build` plus `zig build test` on a native FreeBSD userland (BLUEPRINT §0).
+
+**Verification:** `check_invariants.py` all four families · option coverage still 94/94
+(75 verbatim, 19 prefix, 0 uncovered) · `zig ast-check` clean.
+
+**Files modified: 4** — `readme.md`, `ports/pkg-descr`, `ports/pkg-message`,
+`src/main.zig`.
+
+---
+
 ## 2026-08-29 09:39 — v1 readiness plan executed in full (D-013)
 
 USER: *"proceed - i want this to be a normal pkg not something complicated"*. All four

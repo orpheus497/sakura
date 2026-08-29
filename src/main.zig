@@ -1840,8 +1840,11 @@ fn updateCustomInfo(lbl: *Label, ptr: *anyopaque) !void {
         if (i.info.id != wid) continue;
         // Here, a counter ticks down every time `updateCustomInfo` runs on that
         // particular label. It will only run the command and update the label
-        // once it reaches to 1. If a refresh value is defined it's then reset to
-        // that refresh value.
+        // once it reaches to 1, and is then reset to the refresh value. The
+        // reset and the tick are mutually exclusive: counting down in the same
+        // pass that resets would consume one frame of the interval, making
+        // `refresh` wait one frame fewer than it says and leaving `refresh = 1`
+        // stuck at zero, never repeating.
         if (i.info.counter == 1) {
             var c = try std.process.spawn(state.io, .{
                 .argv = &[_][]const u8{ "/bin/sh", "-c", i.info.cmd orelse custom.UNDEFINED_CMD },
@@ -1880,11 +1883,12 @@ fn updateCustomInfo(lbl: *Label, ptr: *anyopaque) !void {
 
             // Called to re-position the widgets after they receive their output.
             try positionWidgets(state);
-            if (i.info.refresh != 0)
-                i.info.counter = i.info.refresh;
-        }
-        if (i.info.counter != 0)
+            // A refresh of 0 leaves the counter at 0, which is what makes the
+            // command run exactly once.
+            i.info.counter = i.info.refresh;
+        } else if (i.info.counter != 0) {
             i.info.counter -= 1;
+        }
     }
 }
 

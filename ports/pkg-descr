@@ -4,8 +4,10 @@ through OpenPAM, and launches X11, Wayland or plain console sessions.
 
 Because it targets one platform, it talks to it directly: shutdown and reboot go
 through reboot(2), virtual-terminal switching and the keyboard LEDs through
-consio and kbio ioctls, and battery status through a sysctl MIB. No helper
-binaries, no session bus and no login-manager framework are involved.
+consio and kbio ioctls, and battery status through a sysctl MIB. None of that
+shells out to an external helper, and no session bus or login-manager framework
+is involved. The one program installed beside the binary is sakura_wrapper,
+which /etc/gettytab names so getty(8) can start Sakura.
 
 Its distinguishing feature is an animated GIF wallpaper rendered onto the text
 console using quadrant and shade glyphs, which every stock FreeBSD console font

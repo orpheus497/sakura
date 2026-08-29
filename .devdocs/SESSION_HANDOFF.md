@@ -53,6 +53,10 @@ not supply (BLUEPRINT §0). The port needs one build test on a native FreeBSD us
 
 ### Next session starts here
 
+0. **`zig build` and `zig build test`** — a review pass at 10:24 fixed a real off-by-one in
+   the custom-label `refresh` counter (`src/main.zig`, ~`:1845-1887`). `zig ast-check`
+   passes but it has **not been compiled or run**. This is the only runtime-behaviour
+   change in the session; see PROGRESS 10:24.
 1. Build-test `ports/` on a native FreeBSD userland; confirm the staged tree matches
    `pkg-plist` entry for entry.
 2. `distinfo` via `make makesum` — needs the `v1.0.0` tag to exist first (out of scope
