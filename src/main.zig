@@ -1530,13 +1530,24 @@ fn customCommand(ptr: *anyopaque) !bool {
     // The command is administrator-supplied, so its exit status is a
     // configuration matter and belongs in the log. Spawn and wait failures
     // above are already swallowed the same way.
-    if (res.exited != 0) {
-        lbl.log_file.err(
+    // `Term` is a tagged union, so `.exited` cannot simply be read: a command
+    // killed by a signal carries `.signal` instead, and reaching for `.exited`
+    // there is illegal behaviour rather than a zero.
+    switch (res) {
+        .exited => |code| if (code != 0) {
+            lbl.log_file.err(
+                lbl.io,
+                "sys",
+                "custom command '{s}' bound to {s} exited with code {d}",
+                .{ lbl.cmd.name, lbl.key, code },
+            ) catch {};
+        },
+        else => lbl.log_file.err(
             lbl.io,
             "sys",
-            "custom command '{s}' bound to {s} exited with code {d}",
-            .{ lbl.cmd.name, lbl.key, res.exited },
-        ) catch {};
+            "custom command '{s}' bound to {s} did not exit normally",
+            .{ lbl.cmd.name, lbl.key },
+        ) catch {},
     }
     return false;
 }
@@ -1918,8 +1929,29 @@ fn runCustomInfoCommand(state: *UiState, lbl: *Label, info: custom.CustomCommand
     var c = try std.process.spawn(state.io, .{
         .argv = &[_][]const u8{ "/bin/sh", "-c", info.cmd orelse custom.UNDEFINED_CMD },
         .stdout = .pipe,
-        .stderr = .pipe,
+        // Action purpose: stderr is discarded rather than piped, for two
+        // reasons. Nothing ever read that pipe, so a command writing more to it
+        // than the pipe buffer holds blocked forever on the write and the
+        // wait() below never returned -- a permanent freeze of the login screen
+        // with no timeout to break it. And the read that justified piping it
+        // happened *after* wait(), which clears c.stderr, so it was unwrapping
+        // null on every command that produced no stdout. The "possible error"
+        // hint it fed now comes from the exit status, which is both reachable
+        // and a sounder signal than however many bytes happened to be sitting
+        // in a pipe at that instant.
+        .stderr = .ignore,
     });
+
+    // Action purpose: reap on every path out of this function. wait() closes
+    // the child's pipes and clears its id, so it is the cleanup as much as the
+    // reap -- and the allocation failure below used to return without it,
+    // leaving a zombie and an open descriptor behind on every refresh tick.
+    // The flag is set before the real wait() rather than after, because a
+    // wait() that fails has already run that cleanup and must not be repeated.
+    var reaped = false;
+    defer if (!reaped) {
+        _ = c.wait(state.io) catch {};
+    };
 
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_reader = c.stdout.?.reader(state.io, &stdout_buffer);
@@ -1933,7 +1965,8 @@ fn runCustomInfoCommand(state: *UiState, lbl: *Label, info: custom.CustomCommand
     const newline_index = std.mem.indexOfAny(u8, stdout, "\n");
     if (newline_index) |idx| cur_stdout = stdout[0..idx];
 
-    _ = try c.wait(state.io);
+    reaped = true;
+    const term = try c.wait(state.io);
 
     // Sometimes, the output of a command would have an unprintable character at
     // the end of its output, causing '�' (U+FFFD) to appear in its place. Here, we check
@@ -1950,8 +1983,13 @@ fn runCustomInfoCommand(state: *UiState, lbl: *Label, info: custom.CustomCommand
     // not one. The first call is the exception either way, since the label
     // starts on an empty literal with no allocator recorded.
     if (cur_stdout.len == 0) {
-        const stderr_length = try c.stderr.?.length(state.io);
-        try lbl.setTextAlloc(state.allocator, "{s}: [{s}{s}]", .{ info.name, state.lang.custom_info_err_no_output, if (stderr_length > 0) state.lang.custom_info_err_no_output_error else "" });
+        // `Term` is a tagged union, so a child that was signalled rather than
+        // exited has to be matched rather than read through `.exited`.
+        const failed = switch (term) {
+            .exited => |code| code != 0,
+            else => true,
+        };
+        try lbl.setTextAlloc(state.allocator, "{s}: [{s}{s}]", .{ info.name, state.lang.custom_info_err_no_output, if (failed) state.lang.custom_info_err_no_output_error else "" });
     } else {
         try lbl.setTextAlloc(state.allocator, "{s}", .{cur_stdout});
     }

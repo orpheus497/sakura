@@ -8,6 +8,18 @@ const Widget = @import("../Widget.zig");
 
 const page_size = std.heap.page_size_min;
 
+// Action purpose: the whole-page ownership argument below only holds if the
+// page size compiled in is the one the kernel actually uses. Zig gives FreeBSD
+// the same value for page_size_min and page_size_max on every architecture it
+// knows -- 4 KiB for x86, arm, aarch64, powerpc and riscv alike -- and Sakura
+// builds for nothing else, so the two cannot diverge here. Nothing in the type
+// system says that, though, so assert it: a future divergence, or an override
+// of std.options.page_size_max, then fails the build instead of quietly
+// producing a buffer that shares pages with its neighbours again.
+comptime {
+    std.debug.assert(page_size == std.heap.page_size_max);
+}
+
 /// The entry buffer is allocated page-aligned so that the pages it occupies
 /// belong to it alone.
 ///
@@ -107,6 +119,14 @@ pub fn init(
         .keybinds = .init(allocator),
         .locked = false,
     };
+
+    // Action purpose: from here on the widget owns a heap allocation, a keybind
+    // map and possibly a memory lock, and every step below can still fail.
+    // deinit() already releases exactly those, in the right order, so it is
+    // what the unwind should run -- otherwise a failed keybind registration
+    // leaks the entry buffer and leaves its pages locked for the life of the
+    // process.
+    errdefer self.deinit();
 
     // Action purpose: take the whole buffer now, then lock it. Doing it here is
     // what makes the wipes in clear() and deinit() total rather than partial --
