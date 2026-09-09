@@ -102,8 +102,15 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     }
 
     // Set user shell if it hasn't already been set
+    //
+    // Action purpose: the shell name is copied into a buffer owned by this
+    // frame rather than left pointing into libc's own storage, which
+    // endusershell(3) frees. This frame is the right owner because the forked
+    // child below still has it on its stack for the whole of startSession(),
+    // which is what finally passes the shell to execve().
+    var user_shell_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     try log_file.info(io, "auth/passwd", "setting user shell", .{});
-    if (user_entry.shell == null) interop.setUserShell(&user_entry);
+    if (user_entry.shell == null) try interop.setUserShell(&user_entry, &user_shell_buffer);
 
     // chown & chmod stdin (which is the TTY)
     // https://github.com/mirror/busybox/blob/371fe9f71d445d18be28c82a2a6d82115c8af19d/loginutils/login.c#L558
@@ -393,8 +400,16 @@ fn createXauthFile(log_file: *LogFile, io: std.Io, pwd: []const u8, buffer: []u8
     }
 
     // Trim trailing slashes
+    //
+    // Action purpose: both bounds are checked because `xauth_dir` can come
+    // straight from XDG_RUNTIME_DIR. An empty value underflowed on the
+    // subtraction below, and a value of "/" (or any run of slashes) underflowed
+    // inside the loop instead, since nothing stopped it walking past index
+    // zero. Stopping at zero leaves a lone "/", which is the right answer for
+    // that input.
+    if (xauth_dir.len == 0) return error.InvalidXauthDirectory;
     var i = xauth_dir.len - 1;
-    while (xauth_dir[i] == '/') i -= 1;
+    while (i > 0 and xauth_dir[i] == '/') i -= 1;
     const trimmed_xauth_dir = xauth_dir[0 .. i + 1];
 
     const xauthority: []u8 = try std.fmt.bufPrint(buffer, "{s}/{s}", .{ trimmed_xauth_dir, xauth_file });

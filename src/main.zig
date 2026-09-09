@@ -70,6 +70,9 @@ const CustomBindLabel = struct {
     key: []const u8,
     lbl: Label,
     io: std.Io,
+    // The keybind callback receives only this struct, so it carries the log
+    // file itself; a command that fails has nowhere else to be reported.
+    log_file: *LogFile,
 };
 
 const CustomInfoLabel = struct {
@@ -118,6 +121,11 @@ const UiState = struct {
     save_path: []const u8,
     old_save_path: []const u8,
     has_old_save: bool,
+    /// False once the save file has been found unreadable partway through.
+    /// Saving is skipped for the rest of the run when it is, because the write
+    /// truncates and reissues the whole file from what was loaded -- so writing
+    /// after a partial read would discard every entry that was never reached.
+    save_file_intact: bool,
     battery_buf: [16:0]u8,
     bigclock_format_buf: [16:0]u8,
     clock_buf: [64:0]u8,
@@ -234,7 +242,12 @@ pub fn main(init: std.process.Init) !void {
     custom.labels = .empty;
     var config_parser = try IniParser(Config).init(state.allocator, state.io, config_path, migrator.configFieldHandler);
     defer config_parser.deinit();
-    defer if (!shutdown or !restart) {
+    // Action purpose: `and`, not `or`. The two flags are mutually exclusive, so
+    // `!shutdown or !restart` was true in every reachable state and the guard
+    // never guarded anything. The intent is to skip this teardown when the
+    // machine is on its way to powering off or rebooting, where returning
+    // memory to the allocator achieves nothing.
+    defer if (!shutdown and !restart) {
         var iter = custom.binds.iterator();
         while (iter.next()) |i| {
             temporary_allocator.free(i.key_ptr.*);
@@ -253,8 +266,15 @@ pub fn main(init: std.process.Init) !void {
 
     state.config = config_parser.structure;
 
-    var lang_buffer: [16]u8 = undefined;
-    const lang_file = try std.fmt.bufPrint(&lang_buffer, "{s}.ini", .{state.config.lang});
+    // Action purpose: the language file name is allocated rather than formatted
+    // into a fixed buffer. A 16-byte buffer silently capped `lang` at twelve
+    // characters, and going over returned an error that unwound all the way out
+    // of main -- getty would respawn Sakura, which would exit again on the same
+    // line, leaving the machine with no usable login screen over one long value
+    // in the configuration file. --validate-config could not catch it either,
+    // since the value is a perfectly valid string.
+    const lang_file = try std.fmt.allocPrint(state.allocator, "{s}.ini", .{state.config.lang});
+    defer state.allocator.free(lang_file);
 
     const lang_path = try std.Io.Dir.path.join(state.allocator, &[_][]const u8{ config_parent_path, "lang", lang_file });
     defer state.allocator.free(lang_path);
@@ -281,6 +301,15 @@ pub fn main(init: std.process.Init) !void {
 
     state.has_old_save = false;
     state.saved_username = null;
+    state.save_file_intact = true;
+
+    // Action purpose: a single owner for the saved name, registered before
+    // anything can set it. It used to be freed only inside the `type_username`
+    // branch much further down, which additionally required a save file and no
+    // autologin, so every other path through startup leaked it. The condition
+    // is evaluated at scope exit, so registering it here covers whatever the
+    // save file turns out to contain.
+    defer if (state.saved_username) |username| state.allocator.free(username);
 
     if (state.config.save_file_dir != null) read_save_file: {
         old_save_parser = migrator.tryMigrateIniSaveFile(state.allocator, state.io, state.old_save_path, &state.saved_users, usernames.items) catch break :read_save_file;
@@ -298,10 +327,27 @@ pub fn main(init: std.process.Init) !void {
         var file_reader = save_file.reader(state.io, &file_buffer);
         var reader = &file_reader.interface;
 
-        const username_line = reader.takeDelimiterInclusive('\n') catch break :read_save_file;
+        // Action purpose: `takeDelimiter` rather than `takeDelimiterInclusive`.
+        // The inclusive form demands the delimiter, so a final record with no
+        // trailing newline came back as `EndOfStream` and was discarded -- and
+        // since that is indistinguishable from an ordinary end of file, the
+        // write later in the run would then truncate the file and reissue it
+        // without that record. This form treats end-of-stream as a delimiter,
+        // so the last line survives whether or not it is terminated, returns
+        // `null` only when there is genuinely nothing left, and excludes the
+        // delimiter so there is no trailing byte to strip.
+        //
+        // Its two remaining errors are real damage, not an ending: a read that
+        // failed, or a line longer than the reader's capacity. Those mark the
+        // file as compromised so the write is skipped and it is left intact.
+        const maybe_username_line = reader.takeDelimiter('\n') catch {
+            state.save_file_intact = false;
+            break :read_save_file;
+        };
+        const username_line = maybe_username_line orelse break :read_save_file;
 
         if (std.mem.containsAtLeastScalar2(u8, username_line, '-', 1)) read_username: {
-            var iterator = std.mem.splitScalar(u8, username_line[0..(username_line.len - 1)], '-');
+            var iterator = std.mem.splitScalar(u8, username_line, '-');
             if (iterator.next() == null) break :read_username; // Would be index
 
             const maybe_username = iterator.next();
@@ -309,13 +355,29 @@ pub fn main(init: std.process.Init) !void {
                 state.saved_username = try state.allocator.dupe(u8, username);
             }
         } else if (!state.config.type_username) {
-            state.saved_users.last_username_index = std.fmt.parseInt(usize, username_line[0..(username_line.len - 1)], 10) catch break :read_save_file;
+            state.saved_users.last_username_index = std.fmt.parseInt(usize, username_line, 10) catch break :read_save_file;
         }
 
-        while (reader.seek < reader.buffer.len) {
-            const line = reader.takeDelimiterInclusive('\n') catch break;
+        // Action purpose: read to the end of the file, not to the end of the
+        // read buffer. `reader.buffer.len` is the size of the 256-byte staging
+        // buffer above and has nothing to do with how much file is left, so
+        // this loop stopped after roughly the first fifteen accounts however
+        // many were written -- and the write side above emits every one. The
+        // accounts past that point silently lost their remembered session on
+        // every boot. A null return is what actually means "no more lines"; the
+        // two errors are damage, and are handled as described above.
+        while (true) {
+            const maybe_line = reader.takeDelimiter('\n') catch {
+                // See the note above: a read failure or an over-long line ends
+                // the loop, but must not be mistaken for the end of the file,
+                // or the partial list assembled so far would be written back
+                // over the complete one.
+                state.save_file_intact = false;
+                break;
+            };
+            const line = maybe_line orelse break;
 
-            var user = std.mem.splitScalar(u8, line[0..(line.len - 1)], ':');
+            var user = std.mem.splitScalar(u8, line, ':');
             const username = user.next() orelse continue;
             const session_index_str = user.next() orelse continue;
 
@@ -347,6 +409,19 @@ pub fn main(init: std.process.Init) !void {
 
     state.log_file = try LogFile.init(state.io, state.config.sakura_log, &log_file_buffer);
     defer state.log_file.deinit(state.io);
+
+    // Action purpose: reported here rather than where it is detected, because
+    // the save file is read before there is a log to write to. Log only, with
+    // no info-line message: that would need a new `Lang` key, and D-011 settled
+    // that adding one is not worth breaking the locale files' completeness for.
+    if (!state.save_file_intact) {
+        try state.log_file.err(
+            state.io,
+            "conf",
+            "save file could not be read to the end; leaving it untouched this run so a partial read is not written back over it",
+            .{},
+        );
+    }
 
     if (state.config.start_cmd) |start_cmd| handle_start_cmd: {
         var process = std.process.spawn(state.io, .{
@@ -864,6 +939,26 @@ pub fn main(init: std.process.Init) !void {
     );
     defer state.password.deinit();
 
+    // Action purpose: this is what `err_mlock` was always for. The string has
+    // shipped in Lang.zig and all 25 locale files since the fork, with no code
+    // able to produce it, because the FreeBSD rework dropped the lock and kept
+    // the message -- so the program has been carrying a translated claim that
+    // it holds the password out of swap while doing no such thing. It now
+    // reports the truth either way.
+    if (!state.password.locked) {
+        try state.info_line.addMessage(
+            state.lang.err_mlock,
+            state.config.error_bg,
+            state.config.error_fg,
+        );
+        try state.log_file.err(
+            state.io,
+            "sys",
+            "failed to lock password memory out of swap",
+            .{},
+        );
+    }
+
     try state.buffer.registerKeybind(state.io, &state.password.keybinds, "H", &viGoLeft, &state);
     try state.buffer.registerKeybind(state.io, &state.password.keybinds, "L", &viGoRight, &state);
 
@@ -1139,8 +1234,6 @@ pub fn main(init: std.process.Init) !void {
     if (state.config.save_file_dir != null and !state.is_autologin) {
         if (state.login_text) |box| {
             if (state.saved_username) |username| {
-                defer state.allocator.free(username);
-
                 try box.writeText(username);
 
                 default_input = .password;
@@ -1237,6 +1330,7 @@ pub fn main(init: std.process.Init) !void {
             .cmd = i.value_ptr.*,
             .key = i.key_ptr.*,
             .io = state.io,
+            .log_file = &state.log_file,
         });
         state.custom_binds.items[state.custom_binds.items.len - 1].lbl.allocator = state.allocator;
     }
@@ -1322,7 +1416,18 @@ pub fn main(init: std.process.Init) !void {
         );
     }
 
-    if (state.is_autologin) _ = try authenticate(&state);
+    // Action purpose: `is_autologin` makes `authenticate` use `auto_login_service`
+    // (whose auth stack is pam_permit, so it approves unconditionally) with an
+    // empty password, while the login name is still read live from the widget.
+    // It therefore has to be cleared once the single attempt it arms is over,
+    // not only when that attempt succeeded: a failed autologin would otherwise
+    // leave the login box approving whichever user is selected, without a
+    // password. Autologin is documented as firing once at startup and never
+    // re-triggering, so clearing it here matches the documented behaviour.
+    if (state.is_autologin) {
+        _ = try authenticate(&state);
+        state.is_autologin = false;
+    }
 
     const active_widget = switch (default_input) {
         .info_line => info_line_widget,
@@ -1461,7 +1566,33 @@ fn customCommand(ptr: *anyopaque) !bool {
     }) catch return false;
 
     const res = proc.wait(lbl.io) catch return false;
-    if (res.exited != 0) return error.CommandFailed;
+
+    // Action purpose: a non-zero exit is reported, never returned. Keybind
+    // callbacks are invoked with `try` from the event loop, so returning an
+    // error here ended the whole login screen -- getty would then respawn it,
+    // discarding anything already typed, with nothing on screen to say why.
+    // The command is administrator-supplied, so its exit status is a
+    // configuration matter and belongs in the log. Spawn and wait failures
+    // above are already swallowed the same way.
+    // `Term` is a tagged union, so `.exited` cannot simply be read: a command
+    // killed by a signal carries `.signal` instead, and reaching for `.exited`
+    // there is illegal behaviour rather than a zero.
+    switch (res) {
+        .exited => |code| if (code != 0) {
+            lbl.log_file.err(
+                lbl.io,
+                "sys",
+                "custom command '{s}' bound to {s} exited with code {d}",
+                .{ lbl.cmd.name, lbl.key, code },
+            ) catch {};
+        },
+        else => lbl.log_file.err(
+            lbl.io,
+            "sys",
+            "custom command '{s}' bound to {s} did not exit normally",
+            .{ lbl.cmd.name, lbl.key },
+        ) catch {},
+    }
     return false;
 }
 
@@ -1520,7 +1651,13 @@ fn authenticate(ptr: *anyopaque) !bool {
         try TerminalBuffer.presentBuffer();
     }
 
-    if (state.config.save_file_dir != null) save_last_settings: {
+    // Action purpose: `save_file_intact` gates the write as well as
+    // `save_file_dir` does. This block creates the file afresh and reissues it
+    // from `state.saved_users`, so it is a truncate-and-rewrite, not an update.
+    // Doing that after a read that stopped on an error would erase every entry
+    // the read never reached. Skipping it leaves the file as it was, which is
+    // both recoverable and inspectable.
+    if (state.config.save_file_dir != null and state.save_file_intact) save_last_settings: {
         // It isn't worth cluttering the code with precise error
         // handling, so let's just report a generic error message,
         // that should be good enough for debugging anyway.
@@ -1832,6 +1969,85 @@ fn updateClock(self: *Label, ptr: *anyopaque) !void {
     }
 }
 
+// Function purpose: runs one custom label's command and writes its output into
+// that label. It is deliberately a separate function from `updateCustomInfo` so
+// that everything which can fail here -- spawning, waiting, reading the output,
+// allocating the new text, re-laying out the widgets -- has one place to be
+// caught. The event loop invokes widget updates with `try`, so an error allowed
+// to escape this would unwind out of the loop and end the login screen.
+fn runCustomInfoCommand(state: *UiState, lbl: *Label, info: custom.CustomCommandInfo) !void {
+    var c = try std.process.spawn(state.io, .{
+        .argv = &[_][]const u8{ "/bin/sh", "-c", info.cmd orelse custom.UNDEFINED_CMD },
+        .stdout = .pipe,
+        // Action purpose: stderr is discarded rather than piped, for two
+        // reasons. Nothing ever read that pipe, so a command writing more to it
+        // than the pipe buffer holds blocked forever on the write and the
+        // wait() below never returned -- a permanent freeze of the login screen
+        // with no timeout to break it. And the read that justified piping it
+        // happened *after* wait(), which clears c.stderr, so it was unwrapping
+        // null on every command that produced no stdout. The "possible error"
+        // hint it fed now comes from the exit status, which is both reachable
+        // and a sounder signal than however many bytes happened to be sitting
+        // in a pipe at that instant.
+        .stderr = .ignore,
+    });
+
+    // Action purpose: reap on every path out of this function. wait() closes
+    // the child's pipes and clears its id, so it is the cleanup as much as the
+    // reap -- and the allocation failure below used to return without it,
+    // leaving a zombie and an open descriptor behind on every refresh tick.
+    // The flag is set before the real wait() rather than after, because a
+    // wait() that fails has already run that cleanup and must not be repeated.
+    var reaped = false;
+    defer if (!reaped) {
+        _ = c.wait(state.io) catch {};
+    };
+
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_file_reader = c.stdout.?.reader(state.io, &stdout_buffer);
+
+    const stdout = stdout_file_reader.interface.allocRemaining(state.allocator, .limited(state.buffer.width)) catch alloc_error: {
+        break :alloc_error try std.fmt.allocPrint(state.allocator, "{s}: [{s}]", .{ info.name, state.lang.custom_info_err_output_long });
+    };
+    defer state.allocator.free(stdout);
+
+    var cur_stdout = stdout;
+    const newline_index = std.mem.indexOfAny(u8, stdout, "\n");
+    if (newline_index) |idx| cur_stdout = stdout[0..idx];
+
+    reaped = true;
+    const term = try c.wait(state.io);
+
+    // Sometimes, the output of a command would have an unprintable character at
+    // the end of its output, causing '�' (U+FFFD) to appear in its place. Here, we check
+    // if this is the case and remove it.
+    if (cur_stdout.len != 0 and !std.ascii.isPrint(cur_stdout[cur_stdout.len - 1])) {
+        cur_stdout = cur_stdout[0 .. cur_stdout.len - 1];
+    }
+
+    // Action purpose: the previous text is deliberately not freed here.
+    // `setTextAlloc` owns that: it formats first, then frees the old text
+    // through the allocator it recorded last time, and only then takes
+    // ownership. Freeing here as well double-freed that pointer on every
+    // refresh after the first, which is why this reads as a missing free and is
+    // not one. The first call is the exception either way, since the label
+    // starts on an empty literal with no allocator recorded.
+    if (cur_stdout.len == 0) {
+        // `Term` is a tagged union, so a child that was signalled rather than
+        // exited has to be matched rather than read through `.exited`.
+        const failed = switch (term) {
+            .exited => |code| code != 0,
+            else => true,
+        };
+        try lbl.setTextAlloc(state.allocator, "{s}: [{s}{s}]", .{ info.name, state.lang.custom_info_err_no_output, if (failed) state.lang.custom_info_err_no_output_error else "" });
+    } else {
+        try lbl.setTextAlloc(state.allocator, "{s}", .{cur_stdout});
+    }
+
+    // Called to re-position the widgets after they receive their output.
+    try positionWidgets(state);
+}
+
 fn updateCustomInfo(lbl: *Label, ptr: *anyopaque) !void {
     const state: *UiState = @ptrCast(@alignCast(ptr));
     const wid = lbl.widget().id;
@@ -1846,43 +2062,20 @@ fn updateCustomInfo(lbl: *Label, ptr: *anyopaque) !void {
         // `refresh` wait one frame fewer than it says and leaving `refresh = 1`
         // stuck at zero, never repeating.
         if (i.info.counter == 1) {
-            var c = try std.process.spawn(state.io, .{
-                .argv = &[_][]const u8{ "/bin/sh", "-c", i.info.cmd orelse custom.UNDEFINED_CMD },
-                .stdout = .pipe,
-                .stderr = .pipe,
-            });
-
-            var stdout_buffer: [1024]u8 = undefined;
-            var stdout_file_reader = c.stdout.?.reader(state.io, &stdout_buffer);
-
-            const stdout = stdout_file_reader.interface.allocRemaining(state.allocator, .limited(state.buffer.width)) catch alloc_error: {
-                break :alloc_error try std.fmt.allocPrint(state.allocator, "{s}: [{s}]", .{ i.info.name, state.lang.custom_info_err_output_long });
+            // Action purpose: a label's command comes from the configuration
+            // file, so its failure is a configuration problem and not a fault
+            // Sakura should die of. Record it and leave the label showing
+            // whatever it last held; the counter is still reset below, so a
+            // command that fails every time retries on its normal interval
+            // rather than spinning.
+            runCustomInfoCommand(state, lbl, i.info) catch |err| {
+                state.log_file.err(
+                    state.io,
+                    "sys",
+                    "custom label '{s}' failed: {s}",
+                    .{ i.info.name, @errorName(err) },
+                ) catch {};
             };
-            defer state.allocator.free(stdout);
-
-            var cur_stdout = stdout;
-            const newline_index = std.mem.indexOfAny(u8, stdout, "\n");
-            if (newline_index) |idx| cur_stdout = stdout[0..idx];
-
-            _ = try c.wait(state.io);
-
-            // Sometimes, the output of a command would have an unprintable character at
-            // the end of its output, causing '�' (U+FFFD) to appear in its place. Here, we check
-            // if this is the case and remove it.
-            if (cur_stdout.len != 0 and !std.ascii.isPrint(cur_stdout[cur_stdout.len - 1])) {
-                cur_stdout = cur_stdout[0 .. cur_stdout.len - 1];
-            }
-
-            state.allocator.free(lbl.text);
-            if (cur_stdout.len == 0) {
-                const stderr_length = try c.stderr.?.length(state.io);
-                try lbl.setTextAlloc(state.allocator, "{s}: [{s}{s}]", .{ i.info.name, state.lang.custom_info_err_no_output, if (stderr_length > 0) state.lang.custom_info_err_no_output_error else "" });
-            } else {
-                try lbl.setTextAlloc(state.allocator, "{s}", .{cur_stdout});
-            }
-
-            // Called to re-position the widgets after they receive their output.
-            try positionWidgets(state);
             // A refresh of 0 leaves the counter at 0, which is what makes the
             // command run exactly once.
             i.info.counter = i.info.refresh;
