@@ -327,21 +327,27 @@ pub fn main(init: std.process.Init) !void {
         var file_reader = save_file.reader(state.io, &file_buffer);
         var reader = &file_reader.interface;
 
-        // Action purpose: only a genuine end of stream is an ordinary result
-        // here. `takeDelimiterInclusive` also reports `ReadFailed` and
-        // `StreamTooLong`, and treating those as "no more data" is what makes
-        // the write later in the run destructive: it truncates the file and
-        // reissues it from whatever was loaded, so a read that stopped early
-        // would take every unread entry with it. An empty file is not damage --
-        // that is the ordinary first-boot state -- so only the other two mark
-        // the file as compromised.
-        const username_line = reader.takeDelimiterInclusive('\n') catch |err| {
-            if (err != error.EndOfStream) state.save_file_intact = false;
+        // Action purpose: `takeDelimiter` rather than `takeDelimiterInclusive`.
+        // The inclusive form demands the delimiter, so a final record with no
+        // trailing newline came back as `EndOfStream` and was discarded -- and
+        // since that is indistinguishable from an ordinary end of file, the
+        // write later in the run would then truncate the file and reissue it
+        // without that record. This form treats end-of-stream as a delimiter,
+        // so the last line survives whether or not it is terminated, returns
+        // `null` only when there is genuinely nothing left, and excludes the
+        // delimiter so there is no trailing byte to strip.
+        //
+        // Its two remaining errors are real damage, not an ending: a read that
+        // failed, or a line longer than the reader's capacity. Those mark the
+        // file as compromised so the write is skipped and it is left intact.
+        const maybe_username_line = reader.takeDelimiter('\n') catch {
+            state.save_file_intact = false;
             break :read_save_file;
         };
+        const username_line = maybe_username_line orelse break :read_save_file;
 
         if (std.mem.containsAtLeastScalar2(u8, username_line, '-', 1)) read_username: {
-            var iterator = std.mem.splitScalar(u8, username_line[0..(username_line.len - 1)], '-');
+            var iterator = std.mem.splitScalar(u8, username_line, '-');
             if (iterator.next() == null) break :read_username; // Would be index
 
             const maybe_username = iterator.next();
@@ -349,7 +355,7 @@ pub fn main(init: std.process.Init) !void {
                 state.saved_username = try state.allocator.dupe(u8, username);
             }
         } else if (!state.config.type_username) {
-            state.saved_users.last_username_index = std.fmt.parseInt(usize, username_line[0..(username_line.len - 1)], 10) catch break :read_save_file;
+            state.saved_users.last_username_index = std.fmt.parseInt(usize, username_line, 10) catch break :read_save_file;
         }
 
         // Action purpose: read to the end of the file, not to the end of the
@@ -358,19 +364,20 @@ pub fn main(init: std.process.Init) !void {
         // this loop stopped after roughly the first fifteen accounts however
         // many were written -- and the write side above emits every one. The
         // accounts past that point silently lost their remembered session on
-        // every boot. End of stream is what actually means "no more lines"; the
-        // other two outcomes are handled below.
+        // every boot. A null return is what actually means "no more lines"; the
+        // two errors are damage, and are handled as described above.
         while (true) {
-            const line = reader.takeDelimiterInclusive('\n') catch |err| {
+            const maybe_line = reader.takeDelimiter('\n') catch {
                 // See the note above: a read failure or an over-long line ends
-                // the loop the same way end-of-stream does, but it must not be
-                // mistaken for one, or the partial list assembled so far would
-                // be written back over the complete file.
-                if (err != error.EndOfStream) state.save_file_intact = false;
+                // the loop, but must not be mistaken for the end of the file,
+                // or the partial list assembled so far would be written back
+                // over the complete one.
+                state.save_file_intact = false;
                 break;
             };
+            const line = maybe_line orelse break;
 
-            var user = std.mem.splitScalar(u8, line[0..(line.len - 1)], ':');
+            var user = std.mem.splitScalar(u8, line, ':');
             const username = user.next() orelse continue;
             const session_index_str = user.next() orelse continue;
 

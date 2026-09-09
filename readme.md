@@ -38,7 +38,7 @@ covers one layer that the other three deliberately do not:
 | **Sakura** (this repository) | Login | A TUI display manager on the `vt(4)` console. Authenticates through OpenPAM and launches the session. | BSD 2-Clause |
 | **[hikari-sakura](https://github.com/orpheus497/hikari-sakura)** | Compositor | A stacking Wayland compositor with tiling, built on wlroots. Organises windows into *views*, *groups*, *sheets* and a *workspace*, and draws its own top bar and lock screen. | BSD 2-Clause |
 | **[saber](https://github.com/orpheus497/saber)** | Panel | The always-present surface: a Unity 7-style vertical launcher down the left edge carrying running-application tiles, quicklists, the system tray and session controls. | MIT |
-| **[Sofi](https://github.com/orpheus497/sofi)** | Overlays | Every surface that is summoned rather than always present — application menu, window switcher, sheet switcher — plus the notification daemon. | MIT |
+| **[Sofi](https://github.com/orpheus497/sofi)** | Overlays | Every surface that is summoned rather than always present — application menu, control panel, sheet switcher, volume and network panes — plus the notification daemon. | MIT |
 
 The split is along process and privilege boundaries rather than taste. Sakura
 runs before there is a graphical session at all and is the only one of the four
