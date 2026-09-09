@@ -121,6 +121,11 @@ const UiState = struct {
     save_path: []const u8,
     old_save_path: []const u8,
     has_old_save: bool,
+    /// False once the save file has been found unreadable partway through.
+    /// Saving is skipped for the rest of the run when it is, because the write
+    /// truncates and reissues the whole file from what was loaded -- so writing
+    /// after a partial read would discard every entry that was never reached.
+    save_file_intact: bool,
     battery_buf: [16:0]u8,
     bigclock_format_buf: [16:0]u8,
     clock_buf: [64:0]u8,
@@ -296,6 +301,7 @@ pub fn main(init: std.process.Init) !void {
 
     state.has_old_save = false;
     state.saved_username = null;
+    state.save_file_intact = true;
 
     // Action purpose: a single owner for the saved name, registered before
     // anything can set it. It used to be freed only inside the `type_username`
@@ -321,7 +327,18 @@ pub fn main(init: std.process.Init) !void {
         var file_reader = save_file.reader(state.io, &file_buffer);
         var reader = &file_reader.interface;
 
-        const username_line = reader.takeDelimiterInclusive('\n') catch break :read_save_file;
+        // Action purpose: only a genuine end of stream is an ordinary result
+        // here. `takeDelimiterInclusive` also reports `ReadFailed` and
+        // `StreamTooLong`, and treating those as "no more data" is what makes
+        // the write later in the run destructive: it truncates the file and
+        // reissues it from whatever was loaded, so a read that stopped early
+        // would take every unread entry with it. An empty file is not damage --
+        // that is the ordinary first-boot state -- so only the other two mark
+        // the file as compromised.
+        const username_line = reader.takeDelimiterInclusive('\n') catch |err| {
+            if (err != error.EndOfStream) state.save_file_intact = false;
+            break :read_save_file;
+        };
 
         if (std.mem.containsAtLeastScalar2(u8, username_line, '-', 1)) read_username: {
             var iterator = std.mem.splitScalar(u8, username_line[0..(username_line.len - 1)], '-');
@@ -341,10 +358,17 @@ pub fn main(init: std.process.Init) !void {
         // this loop stopped after roughly the first fifteen accounts however
         // many were written -- and the write side above emits every one. The
         // accounts past that point silently lost their remembered session on
-        // every boot. Ending on the read error is what actually means "no more
-        // lines".
+        // every boot. End of stream is what actually means "no more lines"; the
+        // other two outcomes are handled below.
         while (true) {
-            const line = reader.takeDelimiterInclusive('\n') catch break;
+            const line = reader.takeDelimiterInclusive('\n') catch |err| {
+                // See the note above: a read failure or an over-long line ends
+                // the loop the same way end-of-stream does, but it must not be
+                // mistaken for one, or the partial list assembled so far would
+                // be written back over the complete file.
+                if (err != error.EndOfStream) state.save_file_intact = false;
+                break;
+            };
 
             var user = std.mem.splitScalar(u8, line[0..(line.len - 1)], ':');
             const username = user.next() orelse continue;
@@ -378,6 +402,19 @@ pub fn main(init: std.process.Init) !void {
 
     state.log_file = try LogFile.init(state.io, state.config.sakura_log, &log_file_buffer);
     defer state.log_file.deinit(state.io);
+
+    // Action purpose: reported here rather than where it is detected, because
+    // the save file is read before there is a log to write to. Log only, with
+    // no info-line message: that would need a new `Lang` key, and D-011 settled
+    // that adding one is not worth breaking the locale files' completeness for.
+    if (!state.save_file_intact) {
+        try state.log_file.err(
+            state.io,
+            "conf",
+            "save file could not be read to the end; leaving it untouched this run so a partial read is not written back over it",
+            .{},
+        );
+    }
 
     if (state.config.start_cmd) |start_cmd| handle_start_cmd: {
         var process = std.process.spawn(state.io, .{
@@ -1607,7 +1644,13 @@ fn authenticate(ptr: *anyopaque) !bool {
         try TerminalBuffer.presentBuffer();
     }
 
-    if (state.config.save_file_dir != null) save_last_settings: {
+    // Action purpose: `save_file_intact` gates the write as well as
+    // `save_file_dir` does. This block creates the file afresh and reissues it
+    // from `state.saved_users`, so it is a truncate-and-rewrite, not an update.
+    // Doing that after a read that stopped on an error would erase every entry
+    // the read never reached. Skipping it leaves the file as it was, which is
+    // both recoverable and inspectable.
+    if (state.config.save_file_dir != null and state.save_file_intact) save_last_settings: {
         // It isn't worth cluttering the code with precise error
         // handling, so let's just report a generic error message,
         // that should be good enough for debugging anyway.
