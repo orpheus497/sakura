@@ -164,7 +164,10 @@ pub fn setUserShell(entry: *UsernameEntry, buf: []u8) !void {
     if (shell == null) return error.NoUserShellAvailable;
 
     const name = std.mem.span(shell);
-    if (name.len >= buf.len) return error.UserShellTooLong;
+    // A name that exactly fills `buf` is fine: nothing here needs room for a
+    // terminator, since `entry.shell` is a plain slice and the callers that
+    // hand it to execve duplicate it with dupeZ.
+    if (name.len > buf.len) return error.UserShellTooLong;
 
     @memcpy(buf[0..name.len], name[0..name.len]);
     entry.shell = buf[0..name.len];

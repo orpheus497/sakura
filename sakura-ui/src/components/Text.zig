@@ -6,9 +6,22 @@ const TerminalBuffer = @import("../TerminalBuffer.zig");
 const Position = @import("../Position.zig");
 const Widget = @import("../Widget.zig");
 
-const DynamicString = std.ArrayList(u8);
+const page_size = std.heap.page_size_min;
 
-/// Capacity reserved for the entry buffer at construction.
+/// The entry buffer is allocated page-aligned so that the pages it occupies
+/// belong to it alone.
+///
+/// mlock(2) and munlock(2) work in whole pages. An ordinary heap allocation
+/// starts wherever the allocator likes, so locking it means locking the pages
+/// it straddles -- and *unlocking* it means unlocking them too, including any
+/// part shared with a neighbouring allocation. With two `Text` widgets in play
+/// and their teardown ordered by `defer`, destroying one could silently strip
+/// the lock from the other's buffer. Owning whole pages outright removes the
+/// question rather than reasoning about it.
+const DynamicString = std.ArrayListAligned(u8, std.mem.Alignment.fromByteUnits(page_size));
+
+/// Capacity reserved for the entry buffer at construction, as a whole number of
+/// pages so the allocation keeps the exclusive ownership described above.
 ///
 /// Reallocation is what leaks. `std.ArrayList` growth copies the bytes into a
 /// fresh allocation and frees the old one **without wiping it**, so every
@@ -17,36 +30,27 @@ const DynamicString = std.ArrayList(u8);
 /// the whole buffer up front means there is only ever one allocation to wipe,
 /// and only one to lock.
 ///
-/// This is an over-provision, not a limit: nothing rejects a longer entry, it
-/// simply stops being covered past this point. A hard cap was considered and
-/// deliberately not taken, so that no one is ever refused a password they can
-/// actually type.
+/// This is an over-provision, not a limit. Nothing rejects a longer entry: past
+/// this point `growWiped` takes over, which is slower but keeps both guarantees
+/// intact. A hard cap was considered and deliberately not taken, so that no one
+/// is ever refused a password they can actually type.
 const reserved_capacity = 4096;
 
-/// mlock(2) takes a page-aligned address, and `std.c` states that in the type.
-/// The allocator makes no such promise, so the range is widened to the page the
-/// buffer starts in. Locking a little neighbouring heap alongside it is
-/// harmless; the point is that the password cannot be paged out to swap.
-fn lockBuffer(slice: []u8) bool {
+/// Holds the buffer out of swap. The slice is page-aligned by construction and
+/// a whole number of pages long, so the range handed to mlock(2) is exactly the
+/// memory this buffer owns -- no widening, and nothing belonging to anyone else.
+fn lockBuffer(slice: []align(page_size) u8) bool {
     if (slice.len == 0) return false;
 
-    const page_size = std.heap.page_size_min;
-    const base = @intFromPtr(slice.ptr);
-    const start = std.mem.alignBackward(usize, base, page_size);
-    const addr: *align(page_size) const anyopaque = @ptrFromInt(start);
-
-    return std.c.mlock(addr, base - start + slice.len) == 0;
+    const addr: *align(page_size) const anyopaque = @ptrCast(slice.ptr);
+    return std.c.mlock(addr, slice.len) == 0;
 }
 
-fn unlockBuffer(slice: []u8) void {
+fn unlockBuffer(slice: []align(page_size) u8) void {
     if (slice.len == 0) return;
 
-    const page_size = std.heap.page_size_min;
-    const base = @intFromPtr(slice.ptr);
-    const start = std.mem.alignBackward(usize, base, page_size);
-    const addr: *align(page_size) const anyopaque = @ptrFromInt(start);
-
-    _ = std.c.munlock(addr, base - start + slice.len);
+    const addr: *align(page_size) const anyopaque = @ptrCast(slice.ptr);
+    _ = std.c.munlock(addr, slice.len);
 }
 
 const Text = @This();
@@ -301,8 +305,45 @@ fn backspace(ptr: *anyopaque) !bool {
     return false;
 }
 
+// Function purpose: extends the entry buffer by hand once the reserve is used
+// up, so that the allocation being retired is wiped and unlocked before it is
+// released. Letting `std.ArrayList` grow on its own copies the bytes into a new
+// allocation and frees the old one untouched, stranding a readable copy of
+// everything typed so far in freed heap -- reintroducing precisely what
+// `reserved_capacity` exists to prevent, at the moment the entry is longest.
+// Growing by whole reserves keeps the replacement page-aligned and page-sized,
+// which is what `lockBuffer` depends on for exclusive ownership of its pages.
+fn growWiped(self: *Text) !void {
+    var grown: DynamicString = .empty;
+    errdefer grown.deinit(self.allocator);
+
+    try grown.ensureTotalCapacityPrecise(self.allocator, self.text.capacity + reserved_capacity);
+
+    // Action purpose: lock the replacement before anything is copied into it,
+    // not after the copy has landed. Locking afterwards left the new allocation
+    // holding a complete copy of the entry in swappable memory for the width of
+    // the copy -- the one window the lock exists to close, at the moment the
+    // entry is longest. Nothing between here and the assignment below can fail,
+    // so the lock cannot be stranded on a buffer that is then discarded.
+    const grown_locked = lockBuffer(grown.allocatedSlice());
+    grown.appendSliceAssumeCapacity(self.text.items);
+
+    const retired = self.text.allocatedSlice();
+    std.crypto.secureZero(u8, retired);
+    if (self.locked) unlockBuffer(retired);
+
+    self.text.deinit(self.allocator);
+    self.text = grown;
+    self.locked = grown_locked;
+}
+
 fn write(self: *Text, char: u8) !void {
     if (char == 0) return;
+
+    // Action purpose: never let the insert below be the thing that grows the
+    // buffer. It would hand the old allocation back unwiped and unlocked;
+    // growWiped retires it properly first.
+    if (self.text.items.len == self.text.capacity) try self.growWiped();
 
     try self.text.insert(self.allocator, self.cursor, char);
 
