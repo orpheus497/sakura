@@ -90,28 +90,27 @@ pub fn err(self: *LogFile, io: std.Io, category: []const u8, comptime message: [
 }
 
 fn openLogFile(io: std.Io, path: []const u8, log_file: *LogFile) !bool {
-    var could_open_log_file = true;
-    open_log_file: {
-        log_file.maybe_file = std.Io.Dir.cwd().openFile(io, path, .{ .mode = .write_only }) catch std.Io.Dir.cwd().createFile(io, path, .{ .permissions = .fromMode(0o666) }) catch {
-            // If we could neither open an existing log file nor create a new
-            // one, abort.
-            could_open_log_file = false;
-            break :open_log_file;
-        };
-    }
-
-    if (!could_open_log_file) {
-        log_file.maybe_file = try std.Io.Dir.openFileAbsolute(io, "/dev/null", .{ .mode = .write_only });
-    }
+    log_file.maybe_file = std.Io.Dir.cwd().openFile(io, path, .{ .mode = .write_only }) catch std.Io.Dir.cwd().createFile(io, path, .{ .permissions = .fromMode(0o666) }) catch {
+        // Action purpose: if the configured log file can neither be opened nor
+        // created, fall back to syslog(3) rather than to /dev/null. Discarding
+        // the log is at its worst in exactly the situation that causes it: the
+        // troubleshooting instructions send people to this file first, and a
+        // permissions problem or a full disk would hand them an empty one with
+        // the reason already gone. Leaving both handles null is what makes
+        // info() and err() take their syslog branch, and what makes deinit()
+        // close the syslog connection rather than a file.
+        log_file.maybe_file = null;
+        log_file.maybe_file_writer = null;
+        std.posix.system.openlog("sakura", 0, 0);
+        return false;
+    };
 
     var log_file_writer = log_file.maybe_file.?.writer(io, log_file.buffer);
 
     // Seek to the end of the log file
-    if (could_open_log_file) {
-        const stat = try log_file.maybe_file.?.stat(io);
-        try log_file_writer.seekTo(stat.size);
-    }
+    const stat = try log_file.maybe_file.?.stat(io);
+    try log_file_writer.seekTo(stat.size);
 
     log_file.maybe_file_writer = log_file_writer;
-    return could_open_log_file;
+    return true;
 }

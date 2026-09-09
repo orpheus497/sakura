@@ -146,13 +146,28 @@ pub fn setUserContext(allocator: std.mem.Allocator, entry: UsernameEntry) !void 
     if (result != 0) return error.SetUserUidFailed;
 }
 
-pub fn setUserShell(entry: *UsernameEntry) void {
+/// Fills in `entry.shell` from the first entry of /etc/shells, for an account
+/// whose passwd record names no shell. The name is copied into `buf`, which the
+/// caller owns and which must outlive `entry`.
+///
+/// The copy is the point. `getusershell(3)` returns a pointer into a list
+/// `initshells()` allocated, and `endusershell(3)` frees that list, so keeping
+/// the returned pointer left `entry.shell` dangling into freed memory -- which
+/// was then duplicated and handed to `execve` as the program to run.
+pub fn setUserShell(entry: *UsernameEntry, buf: []u8) !void {
     unistd.setusershell();
+    defer unistd.endusershell();
 
+    // getusershell() returns NULL once the list is exhausted, which is also
+    // what an empty or unreadable /etc/shells looks like on the first call.
     const shell = unistd.getusershell();
-    entry.shell = std.mem.span(shell);
+    if (shell == null) return error.NoUserShellAvailable;
 
-    unistd.endusershell();
+    const name = std.mem.span(shell);
+    if (name.len >= buf.len) return error.UserShellTooLong;
+
+    @memcpy(buf[0..name.len], name[0..name.len]);
+    entry.shell = buf[0..name.len];
 }
 
 pub fn setEnvironmentVariable(allocator: std.mem.Allocator, name: []const u8, value: []const u8, replace: bool) !void {
