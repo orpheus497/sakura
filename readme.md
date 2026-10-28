@@ -396,6 +396,29 @@ Linux names virtual terminal devices in decimal with no offset, so virtual
 terminal 2 is `/dev/tty2` — not `/dev/ttyv1` as on FreeBSD. Build with
 `-Ddefault_tty=N` to use a different one.
 
+### What the service files need, and one thing they assume
+
+Every one of the six is a `/bin/sh` script or a declarative unit, so none of
+them needs a package beyond what the init system already requires. In
+particular **the s6 service is not an execline script.** It was one, which made
+`execline` an undocumented dependency at a hardcoded `/bin/execlineb`; it is
+plain `sh` now, and `s6-supervise` execs the `run` file whatever its shebang.
+
+The five non-systemd scripts resolve the program that hands over the terminal
+from `PATH` at start-up, preferring `agetty` and falling back to `getty`, and
+refuse to start with a message naming the cause if neither is present.
+
+> [!NOTE]
+> **One assumption remains, and it is worth stating because it is unverified.**
+> These scripts pass the positional arguments in `agetty`'s order — port, then
+> baud rate, then terminal type. A `getty` that is not a symlink to `agetty`
+> may document a different order, in which case the fallback would start but
+> mis-parse its arguments. Preferring `agetty` avoids this wherever both exist,
+> which covers every util-linux system; it cannot help on a userland that
+> ships only its own `getty`, such as a busybox one. Nobody has yet run Sakura
+> on such a host, so this is a known gap rather than a known failure — if you
+> try it, the result is worth reporting either way.
+
 ## Platform differences
 
 These are the places where FreeBSD and Linux do not and cannot behave

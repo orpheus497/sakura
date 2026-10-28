@@ -14,7 +14,14 @@ pidfile=/run/"${RC_SVCNAME}.pid"
 # /bin/getty was previously handed /sbin/getty, which is not there, and a host
 # with neither was handed an empty command. Both fail at start-up with nothing
 # naming the cause, so start_pre below rejects the second case explicitly.
-GETTY=$(command -v getty || command -v agetty || true)
+#
+# agetty is preferred over getty, not merely first: these scripts pass the
+# positional arguments in agetty's order (port, then baud, then term type).
+# A `getty` that is not a symlink to agetty -- busybox's, notably -- documents
+# a different positional order, so where both names exist the one whose
+# argument order matches is the one to run. On a busybox-only host getty is all
+# there is; see the s6 script's note and the readme on that limitation.
+GETTY=$(command -v agetty || command -v getty || true)
 
 TTY="tty$DEFAULT_TTY"
 TERM_NAME=linux
