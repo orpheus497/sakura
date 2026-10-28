@@ -12,15 +12,16 @@
             .hash = "clap-0.11.0-oBajB7foAQC3Iyn4IVCkUdYaOVVng5IZkSncySTjNig1",
         },
         .zlua = .{
-            // No "?ref=" here, unlike the other git dependencies: upstream has no
-            // zig-0.16 or zig-0.17 branch (its version branches stop at
-            // zig-0.15.2), so the ref this used to name did not exist. Zig never
-            // read it -- the fetcher takes the ref from the URL fragment and
-            // never parses the query -- but a ref that resolves to nothing is an
-            // invitation to "fix" it with another wrong one. The fragment below
-            // is the commit, and .hash is the source of truth regardless.
-            .url = "git+https://github.com/natecraddock/ziglua#8f271c82baa5fc43aa02a72f6da020c2025d9436",
-            .hash = "zlua-0.1.0-hGRpC2aABQD4D9PBVH3wAW8k32-I4969MRQ0CpOwoley",
+            // Pinned to a commit on main, with no "?ref=" unlike the other git
+            // dependencies, because upstream publishes no branch for this Zig
+            // version: its version branches stop at zig-0.15.2, and 0.17.0
+            // support exists only on main. The previous pin named ?ref=zig-0.16,
+            // a branch that has never existed; Zig did not care, since the
+            // fetcher reads the ref from the URL fragment and never parses the
+            // query string, but a ref resolving to nothing invites someone to
+            // replace it with another wrong one. .hash is the source of truth.
+            .url = "git+https://github.com/natecraddock/ziglua#9b9e855e91df9c3d903b5d15ba75e64c8f6ed5f0",
+            .hash = "zlua-0.1.0-hGRpC2mfBQAGjJIw0bTJnMnxPx6ZQxdCAGMtH13Gl3BP",
         },
     },
     .paths = .{

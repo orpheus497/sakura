@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .zigini = .{
-            .url = "git+https://github.com/AshAmetrine/zigini?ref=master#a665d081dda42664a96da2840ea09c5ccf9d0692",
-            .hash = "zigini-0.5.0-BSkB7e9WAACfyCBABNZiWL3gFMw18GKn3qBcPs8L1Ec1",
+            .url = "git+https://github.com/AshAmetrine/zigini?ref=0.6.0#9d0a918c4d2f55bac05ddc9524fcaed7c2279d6c",
+            .hash = "zigini-0.6.0-BSkB7UtYAADFPMY2JFpY0cb2ozdua0J4nARLZguCzrA8",
         },
         .translate_c = .{
             .url = "git+https://codeberg.org/ziglang/translate-c?ref=zig-0.17.x#cfac21f3199b2b02ce3fd7db652aa456421fe4ab",
