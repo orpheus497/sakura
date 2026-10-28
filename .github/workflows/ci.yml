@@ -45,15 +45,80 @@ jobs:
       # spells them the old way even though that spelling still compiles.
       - run: zig fmt --check build.zig install.zig build.zig.zon sakura-ui sakura-core src
 
+  # The Linux jobs exist to test what the FreeBSD job structurally cannot see.
+  # They caught a real defect that FreeBSD could not: TIOCGDEV does not fit in
+  # the c_int that ioctl(3) takes, because Linux's _IOR sets its direction bits
+  # as _IOC_READ << 30 while FreeBSD's uses IOC_OUT and stays positive.
+  #
+  # Zig comes from setup-zig on every Linux job, never from the distribution.
+  # Distribution-packaged Zig spans 0.14.1 to 0.17.0 across these three, so a
+  # matrix built on it would be testing three different languages and calling it
+  # one run. What the distributions supply here is their PAM, libxcb and libc
+  # headers; the compiler is pinned and identical.
+  linux-glibc:
+    name: Build and test on Ubuntu
+    runs-on: ubuntu-latest
+    needs: invariants
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Package names are not interchangeable between distributions, so each job
+      # names its own. PAM headers need installing here, where FreeBSD has them
+      # in the base system.
+      - run: sudo apt-get update
+      - run: >
+          sudo apt-get install -y --no-install-recommends
+          libpam0g-dev libxcb1-dev pkgconf build-essential
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: zig build
+      - run: zig build test
+      - run: ./zig-out/bin/sakura --validate-config res/config.ini
+      - run: zig build -Denable_x11_support=false
+
+  linux-distro:
+    name: Build and test on ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    needs: invariants
+    container: ${{ matrix.image }}
+    strategy:
+      # One distribution's failure must not mask the other's.
+      fail-fast: false
+      matrix:
+        include:
+          - name: Arch Linux
+            image: "archlinux:base-devel"
+            # pkgconf, never pkg-config: on Arch the two conflict and pkgconf
+            # replaces the other.
+            install: pacman -Sy --noconfirm git pam libxcb pkgconf
+          - name: Fedora
+            image: "fedora:43"
+            install: dnf -y install git gcc glibc-devel pam-devel libxcb-devel pkgconf-pkg-config
+    steps:
+      # git must exist before actions/checkout runs: without Git 2.18+ on PATH
+      # it falls back to the REST API and produces no .git, which breaks the
+      # `git describe` that build.zig uses to derive the version string.
+      - run: ${{ matrix.install }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          # Required: without a distinct key the matrix jobs collide in the cache.
+          cache-key: ${{ matrix.name }}
+      - run: zig build
+      - run: zig build test
+      - run: ./zig-out/bin/sakura --validate-config res/config.ini
+
   build:
     name: Build and test on FreeBSD
     runs-on: ubuntu-latest
     # The invariant checks are seconds of pure text comparison; the FreeBSD VM is
     # minutes. Gate on them so obvious drift fails before a VM is spent.
     #
-    # Deliberately NOT gated on `lint`, and no Linux job may be added to this
-    # list: FreeBSD is the first-class platform, so its result must never be
-    # withheld because a cheaper or second-class job failed first.
+    # Deliberately NOT gated on `lint` or on either Linux job, and none may be
+    # added to this list: FreeBSD is the first-class platform, so its result
+    # must never be withheld because a cheaper or second-class job failed
+    # first. Every job hangs off `invariants` alone.
     needs: invariants
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
