@@ -51,9 +51,10 @@ TTYVTDisallocate=yes
 # Defaults to true since SIGPIPE is generally only useful in shell pipelines."
 # -- so `no` is a deliberate departure. The reason is that Sakura execs the
 # user's session: an ignored disposition survives execve, so ignoring SIGPIPE
-# here would hand SIG_IGN to every program in that session and leave none of
-# them able to die on a closed pipe, breaking the shell-pipeline case the
-# documentation names as the signal's purpose.
+# here would hand SIG_IGN to every program in that session, and each would stay
+# unable to die on a closed pipe unless it explicitly restored the default --
+# breaking the shell-pipeline case the documentation names as the signal's
+# purpose, for everything that does not know to undo it.
 IgnoreSIGPIPE=no
 SendSIGHUP=yes
 

@@ -44,6 +44,14 @@ password   include      login
 # in pam_systemd(8) orders the two the same way. They still precede the keyring
 # lines below, which need XDG_RUNTIME_DIR to already exist.
 #
+# This line duplicates pam_systemd on distributions whose own login stack
+# already calls it, and moving it below `include login` does not change that.
+# pam_systemd(8) documents nothing about repeated invocation, so the effect is
+# genuinely undocumented rather than known-harmless; `optional` and the "-"
+# prefix keep it non-fatal either way. It stays because removing it would leave
+# elogind distributions -- and any whose login stack omits pam_systemd -- with
+# no logind session at all, which is the failure this policy exists to prevent.
+#
 # No `class=` is given. pam_systemd(8) states that with neither the module
 # option nor XDG_SESSION_CLASS set, "the class is automatically chosen,
 # depending on various session parameters, such as the session type (if known),
