@@ -46,11 +46,17 @@ password   include      login
 #
 # This line duplicates pam_systemd on distributions whose own login stack
 # already calls it, and moving it below `include login` does not change that.
-# pam_systemd(8) documents nothing about repeated invocation, so the effect is
-# genuinely undocumented rather than known-harmless; `optional` and the "-"
-# prefix keep it non-fatal either way. It stays because removing it would leave
-# elogind distributions -- and any whose login stack omits pam_systemd -- with
-# no logind session at all, which is the failure this policy exists to prevent.
+# pam_systemd(8) documents nothing about repeated invocation, so whether it is
+# harmless is simply unknown -- and nothing here bounds it. `optional` only
+# tells PAM to ignore the module's return status, and the "-" prefix only
+# suppresses the log line when the module is absent; neither limits what a
+# second invocation may do as a side effect.
+#
+# The line stays regardless, because removing it would leave elogind
+# distributions -- and any whose login stack omits pam_systemd -- with no
+# logind session at all, which is the failure this policy exists to prevent.
+# Should duplication ever prove harmful, the fix is to detect the duplicate,
+# not to drop the fallback.
 #
 # No `class=` is given. pam_systemd(8) states that with neither the module
 # option nor XDG_SESSION_CLASS set, "the class is automatically chosen,
