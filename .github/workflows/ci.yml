@@ -5,6 +5,18 @@ on:
     branches: [master]
   pull_request:
 
+# Zig is pinned here, not taken from any distribution's package set. The three
+# build.zig.zon manifests carry `minimum_zig_version`, but Zig documents that
+# field as "currently advisory only; the compiler does not yet do anything with
+# this version" -- so it records intent and enforces nothing. CI is the only
+# place the toolchain version is actually decided, which is why it is pinned
+# below rather than installed with `pkg install zig`.
+env:
+  ZIG_VERSION: "0.17.0"
+  # sha256 of https://ziglang.org/download/0.17.0/zig-x86_64-freebsd-0.17.0.tar.xz
+  # as published in https://ziglang.org/download/index.json.
+  ZIG_FREEBSD_SHA256: "a314f1cc92d098bd39caf9e5607a0de2a8fd0d00064776cb3fd5b3bee38a67c9"
+
 jobs:
   invariants:
     name: Cross-file invariants
@@ -17,11 +29,31 @@ jobs:
       # Pure text checks over the tree, so they need no FreeBSD and no toolchain.
       - run: python3 tools/check_invariants.py
 
+  lint:
+    name: Formatting
+    runs-on: ubuntu-latest
+    # Seconds of work, so gate it on the invariants for the same reason the
+    # FreeBSD build is gated: cheap checks report first.
+    needs: invariants
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      # `zig fmt` is not only a formatter: it also rewrites builtins that were
+      # renamed in the pinned release, so this check fails on a tree that still
+      # spells them the old way even though that spelling still compiles.
+      - run: zig fmt --check build.zig install.zig build.zig.zon sakura-ui sakura-core src
+
   build:
     name: Build and test on FreeBSD
     runs-on: ubuntu-latest
     # The invariant checks are seconds of pure text comparison; the FreeBSD VM is
     # minutes. Gate on them so obvious drift fails before a VM is spent.
+    #
+    # Deliberately NOT gated on `lint`, and no Linux job may be added to this
+    # list: FreeBSD is the first-class platform, so its result must never be
+    # withheld because a cheaper or second-class job failed first.
     needs: invariants
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -30,17 +62,55 @@ jobs:
       # system headers (security/pam_appl.h, login_cap.h, sys/kbio.h,
       # sys/consio.h) that are not part of the libc headers Zig bundles. The
       # build must therefore happen on a real FreeBSD userland.
+      #
+      # `release` is pinned rather than left to the action's default so the
+      # userland cannot change under the build. 14.3 is a supported release and
+      # satisfies Zig 0.17.0's documented minimum of FreeBSD 14.0.
       - name: Build in a FreeBSD VM
-        uses: vmactions/freebsd-vm@d0518f912576ae759075aa00fb9fe27037940271 # v1.5.4
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
         with:
-          usesh: true
-          # ca_root_nss is needed because the dependencies in zig-pkg/ are not
-          # committed; zig fetches them over TLS on first build.
+          release: "14.3"
+          envs: "ZIG_VERSION ZIG_FREEBSD_SHA256"
+          # The toolchain is unpacked outside the synced working copy, so
+          # copyback has nothing large to rsync back to the host runner.
+          copyback: false
+          # ca_root_nss is needed twice over: the dependencies in zig-pkg/ are
+          # not committed, so zig fetches them over TLS on first build, and the
+          # pinned toolchain below is fetched over TLS too. pkgconf is how Zig
+          # resolves linkSystemLibrary("xcb"), via xcb.pc under ${LOCALBASE}.
+          #
+          # zig is deliberately absent from this list: `pkg install zig` would
+          # install whatever version the package set currently carries, which is
+          # exactly the thing being pinned against.
           prepare: |
-            pkg install -y zig git libxcb ca_root_nss
+            pkg install -y git pkgconf libxcb ca_root_nss
           run: |
             set -e
+
+            # Action purpose: install the exact pinned Zig and refuse to proceed
+            # on any other bytes. A mismatch means the tarball is not the
+            # reviewed toolchain, so the build must stop rather than silently
+            # test a different compiler.
+            zigdir=/tmp/zig
+            mkdir -p "$zigdir"
+            fetch -o "$zigdir/zig.tar.xz" \
+              "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-freebsd-${ZIG_VERSION}.tar.xz"
+            actual=$(sha256 -q "$zigdir/zig.tar.xz")
+            if [ "$actual" != "$ZIG_FREEBSD_SHA256" ]; then
+              echo "zig tarball checksum mismatch" >&2
+              echo "  expected $ZIG_FREEBSD_SHA256" >&2
+              echo "  actual   $actual" >&2
+              exit 1
+            fi
+            tar xf "$zigdir/zig.tar.xz" -C "$zigdir"
+            PATH="$zigdir/zig-x86_64-freebsd-${ZIG_VERSION}:$PATH"
+            export PATH
+
+            # Assert the pin took effect before anything is built, so a wrong
+            # toolchain is reported as such instead of as a compile error.
             zig version
+            [ "$(zig version)" = "$ZIG_VERSION" ]
+
             zig build
             zig build test
             # The program's own validator, run against the configuration we ship.
