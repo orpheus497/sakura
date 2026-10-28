@@ -49,10 +49,10 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
 
     // Open the PAM session
     try log_file.info(io, "auth/pam", "encoding credentials", .{});
-    const login_z = try allocator.dupeZ(u8, login);
+    const login_z = try allocator.dupeSentinel(u8, login, 0);
     defer allocator.free(login_z);
 
-    const password_z = try allocator.dupeZ(u8, password);
+    const password_z = try allocator.dupeSentinel(u8, password, 0);
     defer allocator.free(password_z);
 
     var credentials = [_:null]?[*:0]const u8{ login_z, password_z };
@@ -206,7 +206,7 @@ fn startSession(
         }
     }
 
-    const home_z = try allocator.dupeZ(u8, user_entry.home.?);
+    const home_z = try allocator.dupeSentinel(u8, user_entry.home.?, 0);
     defer allocator.free(home_z);
 
     // Change to the user's home directory
@@ -301,7 +301,7 @@ fn loginConv(
         switch (messages[i].?.msg_style) {
             interop.pam.PAM_PROMPT_ECHO_ON => {
                 const data: [*][*:0]u8 = @ptrCast(@alignCast(appdata_ptr));
-                username = allocator.dupeZ(u8, std.mem.span(data[0])) catch {
+                username = allocator.dupeSentinel(u8, std.mem.span(data[0]), 0) catch {
                     status = interop.pam.PAM_BUF_ERR;
                     break :set_credentials;
                 };
@@ -309,7 +309,7 @@ fn loginConv(
             },
             interop.pam.PAM_PROMPT_ECHO_OFF => {
                 const data: [*][*:0]u8 = @ptrCast(@alignCast(appdata_ptr));
-                password = allocator.dupeZ(u8, std.mem.span(data[1])) catch {
+                password = allocator.dupeSentinel(u8, std.mem.span(data[1]), 0) catch {
                     status = interop.pam.PAM_BUF_ERR;
                     break :set_credentials;
                 };
@@ -484,7 +484,7 @@ fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, s
     const display_name = try std.fmt.bufPrint(&buf, ":{d}", .{display_num});
     try log_file.info(io, "auth/x11", "got free display: {d}", .{display_num});
 
-    const shell_z = try allocator.dupeZ(u8, shell);
+    const shell_z = try allocator.dupeSentinel(u8, shell, 0);
     defer allocator.free(shell_z);
 
     try log_file.info(io, "auth/x11", "creating xauth file", .{});
@@ -569,7 +569,7 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
     }
     defer if (maybe_log_file) |log_file| log_file.close(io);
 
-    const shell_z = try allocator.dupeZ(u8, shell);
+    const shell_z = try allocator.dupeSentinel(u8, shell, 0);
     defer allocator.free(shell_z);
 
     var cmd_buffer: [1024]u8 = undefined;

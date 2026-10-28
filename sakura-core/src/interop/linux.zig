@@ -116,8 +116,15 @@ fn devMinor(dev: u64) u32 {
 pub fn getActiveTty() !u8 {
     // Strategy 1: TIOCGDEV reports the device number of the VT behind the file
     // descriptor, without depending on a controlling terminal.
+    //
+    // Action purpose: the request has to be bit-cast rather than passed
+    // directly. Linux's _IOR sets its direction bits as _IOC_READ << 30, i.e.
+    // 0x80000000, so TIOCGDEV is 0x80045432 -- above c_int's maximum, which is
+    // what ioctl(3) takes. FreeBSD's _IOR uses IOC_OUT (0x40000000) instead and
+    // stays positive, which is why none of the FreeBSD requests need this.
     var dev: c_uint = 0;
-    if (std.c.ioctl(std.posix.STDIN_FILENO, vt.TIOCGDEV, &dev) == 0) {
+    const tiocgdev: c_int = @bitCast(@as(u32, vt.TIOCGDEV));
+    if (std.c.ioctl(std.posix.STDIN_FILENO, tiocgdev, &dev) == 0) {
         if (vtFromDev(devMajor(dev), devMinor(dev))) |tty| return tty;
     }
 
@@ -219,7 +226,7 @@ pub fn setNumlock(val: bool) !void {
 /// pam_umask and pam_env in the session stack -- so they are configured in the
 /// PAM policy rather than here.
 pub fn setUserContext(allocator: std.mem.Allocator, entry: UsernameEntry) !void {
-    const username_z = try allocator.dupeZ(u8, entry.username.?);
+    const username_z = try allocator.dupeSentinel(u8, entry.username.?, 0);
     defer allocator.free(username_z);
 
     // Linux has initgroups() in grp, not unistd.
@@ -251,7 +258,7 @@ pub fn setUserShell(entry: *UsernameEntry, buf: []u8) !void {
     const name = std.mem.span(shell);
     // A name that exactly fills `buf` is fine: nothing here needs room for a
     // terminator, since `entry.shell` is a plain slice and the callers that
-    // hand it to execve duplicate it with dupeZ.
+    // hand it to execve duplicate it with dupeSentinel.
     if (name.len > buf.len) return error.UserShellTooLong;
 
     @memcpy(buf[0..name.len], name[0..name.len]);
@@ -259,10 +266,10 @@ pub fn setUserShell(entry: *UsernameEntry, buf: []u8) !void {
 }
 
 pub fn setEnvironmentVariable(allocator: std.mem.Allocator, name: []const u8, value: []const u8, replace: bool) !void {
-    const name_z = try allocator.dupeZ(u8, name);
+    const name_z = try allocator.dupeSentinel(u8, name, 0);
     defer allocator.free(name_z);
 
-    const value_z = try allocator.dupeZ(u8, value);
+    const value_z = try allocator.dupeSentinel(u8, value, 0);
     defer allocator.free(value_z);
 
     const status = stdlib.setenv(name_z.ptr, value_z.ptr, @intFromBool(replace));
@@ -410,20 +417,24 @@ fn readSysfsUnsigned(path: []const u8) ?u64 {
 /// FreeBSD's reboot(2) syncs unless RB_NOSYNC is given, so this is a real
 /// asymmetry and the sync below must not be factored out as common code.
 ///
-/// The raw syscall is used rather than the libc wrapper because the constant
-/// names differ between the two kernels -- FreeBSD spells it RB_POWEROFF and
-/// Linux RB_POWER_OFF -- while RB_AUTOBOOT exists on both with *different*
-/// values, which would compile cleanly and then do the wrong thing.
+/// std.posix.reboot is used rather than the libc wrapper or a hand-rolled
+/// syscall. The libc constant names differ between the two kernels -- FreeBSD
+/// spells it RB_POWEROFF and Linux RB_POWER_OFF -- while RB_AUTOBOOT exists on
+/// both with *different* values, which would compile cleanly and then do the
+/// wrong thing. The wrapper takes a tagged command instead of a bare integer,
+/// so neither mistake is expressible, and it decodes errno properly: the raw
+/// syscall returns a `usize` whose error range cannot be sign-checked the way
+/// `isError` checks a libc return.
+///
+/// Neither command returns on success, so a return at all means failure.
 pub fn shutdownSystem() !void {
     std.posix.system.sync();
-    if (isError(std.os.linux.reboot(.MAGIC1, .MAGIC2, .POWER_OFF, null))) {
-        return error.CouldntShutdown;
-    }
+    std.posix.reboot(.POWER_OFF) catch return error.CouldntShutdown;
+    return error.CouldntShutdown;
 }
 
 pub fn rebootSystem() !void {
     std.posix.system.sync();
-    if (isError(std.os.linux.reboot(.MAGIC1, .MAGIC2, .RESTART, null))) {
-        return error.CouldntReboot;
-    }
+    std.posix.reboot(.RESTART) catch return error.CouldntReboot;
+    return error.CouldntReboot;
 }

@@ -134,7 +134,7 @@ pub fn setNumlock(val: bool) !void {
 }
 
 pub fn setUserContext(allocator: std.mem.Allocator, entry: UsernameEntry) !void {
-    const username_z = try allocator.dupeZ(u8, entry.username.?);
+    const username_z = try allocator.dupeSentinel(u8, entry.username.?, 0);
     defer allocator.free(username_z);
 
     // FreeBSD has initgroups() in unistd
@@ -166,7 +166,7 @@ pub fn setUserShell(entry: *UsernameEntry, buf: []u8) !void {
     const name = std.mem.span(shell);
     // A name that exactly fills `buf` is fine: nothing here needs room for a
     // terminator, since `entry.shell` is a plain slice and the callers that
-    // hand it to execve duplicate it with dupeZ.
+    // hand it to execve duplicate it with dupeSentinel.
     if (name.len > buf.len) return error.UserShellTooLong;
 
     @memcpy(buf[0..name.len], name[0..name.len]);
@@ -174,10 +174,10 @@ pub fn setUserShell(entry: *UsernameEntry, buf: []u8) !void {
 }
 
 pub fn setEnvironmentVariable(allocator: std.mem.Allocator, name: []const u8, value: []const u8, replace: bool) !void {
-    const name_z = try allocator.dupeZ(u8, name);
+    const name_z = try allocator.dupeSentinel(u8, name, 0);
     defer allocator.free(name_z);
 
-    const value_z = try allocator.dupeZ(u8, value);
+    const value_z = try allocator.dupeSentinel(u8, value, 0);
     defer allocator.free(value_z);
 
     const status = stdlib.setenv(name_z.ptr, value_z.ptr, @intFromBool(replace));
