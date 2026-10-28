@@ -118,7 +118,15 @@ Setting the desktop up from Sakura's side is covered in
 | Platform | Status |
 | --- | --- |
 | FreeBSD | **First-class.** The platform Sakura is designed for and tested on. |
-| Linux | **Supported, second-class.** Works correctly, but FreeBSD wins design ties. |
+| Linux | **Supported, second-class.** Builds and passes the test suite on Ubuntu, Arch and Fedora in CI; FreeBSD wins design ties. See the caveat below. |
+
+> **What "supported" does and does not claim on Linux.** CI builds Sakura, runs
+> its tests and validates the shipped `config.ini` on three Linux
+> distributions. It cannot exercise a login: a PAM conversation, a virtual
+> terminal switch, a `utmp` write and session setup all need a real console,
+> and none of them has been run on Linux hardware yet. Treat the Linux port as
+> compiling and self-consistent rather than as proven in service, and please
+> report what happens when you try it.
 
 Everything below documents FreeBSD first. Where Linux differs, there is a
 **Linux** subsection saying how — and where the two genuinely cannot behave
@@ -283,7 +291,7 @@ just editing `config.ini`.
 | --- | --- | --- |
 | `dest_directory` | *(empty)* | Staging root. Every installed path is written beneath it instead of `/`. This is the `DESTDIR` equivalent a package build uses; it does not affect paths compiled into the binary |
 | `prefix_directory` | `/usr/local` on FreeBSD, `/usr` on Linux | Install prefix. *Embedded* — it is also the default for `x_cmd`, `xauth_cmd`, `xsessions` and `waylandsessions` |
-| `config_directory` | `/usr/local/etc` on FreeBSD, `/etc` on Linux | Configuration root. *Embedded* — it is also the default for `custom_sessions`, `save_file_dir`, `setup_cmd`, `gif_file`, `dur_file_path` and `lua_animation_file`. The Linux default is not a preference: Linux-PAM reads policies only from `/etc/pam.d` |
+| `config_directory` | `/usr/local/etc` on FreeBSD, `/etc` on Linux | Configuration root. *Embedded* — it is also the default for `custom_sessions`, `save_file_dir`, `setup_cmd`, `gif_file`, `dur_file_path` and `lua_animation_file`. **On Linux this must resolve to `/etc` on the target host.** It is not a preference: Linux-PAM reads policies only from the directory libpam was built with, normally `/etc/pam.d`, and the openrc, sysvinit, dinit and runit service files are installed relative to this root too. Point it elsewhere and the build still succeeds while PAM and the init system find nothing — login then fails at run time. Use `dest_directory` for staged packaging, which prefixes the staging root and leaves this path alone |
 | `init_system` | `systemd` on Linux, `none` on FreeBSD | **Linux only.** Which init system to install a service file for: `systemd`, `openrc`, `runit`, `s6`, `dinit`, `sysvinit`, or `none`. FreeBSD uses `getty(8)` from `/etc/ttys` and installs no service file |
 | `name` | `sakura` | Renames **only** the installed binary and its getty wrapper. The configuration directory, both PAM policies and the default `service_name` stay `sakura` |
 | `enable_x11_support` | `true` | Links `libxcb` for X11 sessions. Set `false` for a Wayland- or console-only build, which then needs neither `libxcb` nor `pkgconf` |
@@ -690,12 +698,16 @@ Renamed, with the old name still accepted:
 | `min_refresh_delta` | `animation_frame_delay` |
 | `blank_password` | `clear_password` |
 
-Dropped, because they have no FreeBSD equivalent:
+Platform-specific, and all still supported — carry them over unchanged:
 
-- `battery_id` — the Linux sysfs identifier. Use `battery_sysctl`, which takes a
-  sysctl MIB such as `hw.acpi.battery.life`, instead.
-- `login_defs_path` — `/etc/login.defs` is a Linux file. The UID range is fixed at
-  build time with `-Duid_min` and `-Duid_max`.
+- `battery_id` — the Linux power-supply identifier under
+  `/sys/class/power_supply`. Still read on Linux.
+- `battery_sysctl` — the FreeBSD equivalent, a sysctl MIB such as
+  `hw.acpi.battery.life`. Both keys exist on both platforms and each ignores
+  the other's, so one file works on both hosts.
+- `login_defs_path` — the path to `login.defs(5)`, read on Linux for the UID
+  range. FreeBSD has no such file and uses the `-Duid_min`/`-Duid_max` build
+  options, which are also the fallback on Linux when the file cannot be read.
 
 Folded into other options: `sleep_key`/`sleep_cmd` and
 `hibernate_key`/`hibernate_cmd` become custom keybinds, since FreeBSD has no

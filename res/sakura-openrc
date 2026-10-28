@@ -9,13 +9,12 @@ respawn_period=60
 pidfile=/run/"${RC_SVCNAME}.pid"
 
 # Action purpose: the program that hands the terminal over is getty on busybox
-# systems and agetty on util-linux ones. Pick whichever exists rather than
-# assuming, since both are plausible on an OpenRC host.
-if [ -x /sbin/getty ] || [ -x /bin/getty ]; then
-	GETTY="/sbin/getty"
-elif [ -x /sbin/agetty ] || [ -x /bin/agetty ]; then
-	GETTY="/sbin/agetty"
-fi
+# systems and agetty on util-linux ones. Resolve whichever is on PATH instead
+# of testing fixed directories and then assuming /sbin: a host carrying only
+# /bin/getty was previously handed /sbin/getty, which is not there, and a host
+# with neither was handed an empty command. Both fail at start-up with nothing
+# naming the cause, so start_pre below rejects the second case explicitly.
+GETTY=$(command -v getty || command -v agetty || true)
 
 TTY="tty$DEFAULT_TTY"
 TERM_NAME=linux
@@ -25,6 +24,13 @@ command="${GETTY}"
 # -n skips the login-name prompt; -l replaces login(1) with Sakura, which does
 # its own authentication.
 command_args_foreground="-nl $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME ${TTY} ${BAUD} ${TERM_NAME}"
+
+start_pre() {
+	if [ -z "${GETTY}" ]; then
+		eerror "Neither getty nor agetty was found on PATH."
+		return 1
+	fi
+}
 
 depend() {
 	after agetty

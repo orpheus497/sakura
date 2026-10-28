@@ -11,6 +11,15 @@ on:
 # this version" -- so it records intent and enforces nothing. CI is the only
 # place the toolchain version is actually decided, which is why it is pinned
 # below rather than installed with `pkg install zig`.
+# Nothing in this workflow pushes, fetches or reads a secret: the only git
+# operation is the `git describe` that build.zig runs to derive the version
+# string, which is local to the checkout. So the job token needs read access and
+# nothing more, and the checkouts below drop it from .git/config entirely --
+# `zig build` executes the build.zig of every dependency, and a write-capable
+# token left in the clone is reachable from that code.
+permissions:
+  contents: read
+
 env:
   ZIG_VERSION: "0.17.0"
   # sha256 of https://ziglang.org/download/0.17.0/zig-x86_64-freebsd-0.17.0.tar.xz
@@ -26,6 +35,8 @@ jobs:
       # at different code without the workflow changing. The comment records the
       # release each SHA corresponds to so it can be bumped deliberately.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       # Pure text checks over the tree, so they need no FreeBSD and no toolchain.
       - run: python3 tools/check_invariants.py
 
@@ -37,6 +48,8 @@ jobs:
     needs: invariants
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: ${{ env.ZIG_VERSION }}
@@ -61,6 +74,8 @@ jobs:
     needs: invariants
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       # Package names are not interchangeable between distributions, so each job
       # names its own. PAM headers need installing here, where FreeBSD has them
       # in the base system.
@@ -100,6 +115,8 @@ jobs:
       # `git describe` that build.zig uses to derive the version string.
       - run: ${{ matrix.install }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: ${{ env.ZIG_VERSION }}
@@ -122,6 +139,8 @@ jobs:
     needs: invariants
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # Sakura cannot be cross-compiled from Linux: it translates FreeBSD base
       # system headers (security/pam_appl.h, login_cap.h, sys/kbio.h,

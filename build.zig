@@ -105,7 +105,7 @@ pub fn build(b: *std.Build) !void {
     const default_config_directory = if (is_freebsd) "/usr/local/etc" else "/etc";
 
     const dest_directory = b.option([]const u8, "dest_directory", "Specify a destination directory for installation") orelse "";
-    const config_directory = b.option([]const u8, "config_directory", "Specify a default config directory (default is /usr/local/etc on FreeBSD, /etc on Linux). This path gets embedded into the binary") orelse default_config_directory;
+    const config_directory = b.option([]const u8, "config_directory", "Specify a default config directory (default is /usr/local/etc on FreeBSD, /etc on Linux). This path gets embedded into the binary. On Linux it must resolve to /etc on the target host: Linux-PAM reads policies only from the directory libpam was built with, and the non-systemd service files install relative to this root. Use -Ddest_directory for staged packaging instead") orelse default_config_directory;
     const prefix_directory = b.option([]const u8, "prefix_directory", "Specify a default prefix directory (default is /usr/local on FreeBSD, /usr on Linux)") orelse default_prefix_directory;
     const executable_name = b.option([]const u8, "name", "Specify installed executable file name (default is sakura)") orelse "sakura";
 

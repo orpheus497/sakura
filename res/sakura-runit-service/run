@@ -3,12 +3,13 @@
 
 [ -r conf ] && . ./conf
 
-if [ -x /sbin/getty ] || [ -x /bin/getty ]; then
-	# busybox
-	GETTY=getty
-elif [ -x /sbin/agetty ] || [ -x /bin/agetty ]; then
-	# util-linux
-	GETTY=agetty
+# Action purpose: getty on busybox systems, agetty on util-linux ones. Resolved
+# from PATH so the name that is found is the name that runs, and an absent pair
+# is reported here rather than becoming an empty argument to setsid.
+GETTY=$(command -v getty || command -v agetty || true)
+if [ -z "$GETTY" ]; then
+	echo "sakura: neither getty nor agetty was found on PATH" >&2
+	exit 1
 fi
 
 # setsid: Sakura must be a session leader to own the terminal and to switch
