@@ -96,7 +96,7 @@ pub fn ttyDeviceName(buf: []u8, tty: u8) ![]u8 {
 
 /// Same as `ttyDeviceName()`, but NUL-terminated for passing to C.
 pub fn ttyDeviceNameZ(buf: []u8, tty: u8) ![:0]u8 {
-    return std.fmt.bufPrintZ(buf, "ttyv{x}", .{tty -| 1});
+    return std.fmt.bufPrintSentinel(buf, "ttyv{x}", .{tty -| 1}, 0);
 }
 
 pub fn switchTty(tty: u8) !void {
@@ -247,7 +247,7 @@ pub fn rebootSystem() !void {
 /// rather than reported as a charge level.
 pub fn getBatteryPercentage(source: []const u8) !u8 {
     var mib_buffer: [128]u8 = undefined;
-    const mib_z = std.fmt.bufPrintZ(&mib_buffer, "{s}", .{source}) catch return error.BatterySourceTooLong;
+    const mib_z = std.fmt.bufPrintSentinel(&mib_buffer, "{s}", .{source}, 0) catch return error.BatterySourceTooLong;
 
     var capacity: c_int = -1;
     var size: usize = @sizeOf(c_int);

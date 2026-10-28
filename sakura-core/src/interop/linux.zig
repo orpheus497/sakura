@@ -167,7 +167,7 @@ pub fn ttyDeviceName(buf: []u8, tty: u8) ![]u8 {
 
 /// Same as `ttyDeviceName()`, but NUL-terminated for passing to C.
 pub fn ttyDeviceNameZ(buf: []u8, tty: u8) ![:0]u8 {
-    return std.fmt.bufPrintZ(buf, "tty{d}", .{tty});
+    return std.fmt.bufPrintSentinel(buf, "tty{d}", .{tty}, 0);
 }
 
 pub fn switchTty(tty: u8) !void {
@@ -391,7 +391,7 @@ fn readSysfsEnergy(source: []const u8, comptime leaf: []const u8) ?u64 {
 
 fn readSysfsUnsigned(path: []const u8) ?u64 {
     var path_z_buffer: [160]u8 = undefined;
-    const path_z = std.fmt.bufPrintZ(&path_z_buffer, "{s}", .{path}) catch return null;
+    const path_z = std.fmt.bufPrintSentinel(&path_z_buffer, "{s}", .{path}, 0) catch return null;
 
     const fd = std.c.open(path_z.ptr, .{ .ACCMODE = .RDONLY });
     if (fd < 0) return null;
