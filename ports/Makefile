@@ -11,10 +11,20 @@ LICENSE=	BSD2CLAUSE
 LICENSE_FILE=	${WRKSRC}/license.md
 
 # Sakura needs Zig 0.17.0 or newer: it uses @splat for array repetition (the **
-# operator is gone), std.Build's `root` field, the lowercase std.lang.Optimize
-# tags and the field_names/field_types reflection shape, none of which exist in
-# 0.16.x. USES=zig takes whatever lang/zig currently is, so if the ports tree is
-# still on 0.16.x this port cannot build until lang/zig is updated.
+# operator was removed), std.Build's `root` field, the lowercase
+# std.lang.Optimize tags and the field_names/field_types reflection shape, none
+# of which exist in 0.16.x.
+#
+# USES=zig builds with lang/zig, which is 0.16.0 in the current ports tree, so
+# the port cannot build today. USES=zig:XYZ would select lang/zigXYZ instead,
+# but no lang/zig017 exists -- only the frozen lang/zig015 and lang/zig014
+# siblings -- so there is nothing to point it at.
+#
+# BROKEN rather than a bare comment: a port that cannot build must say so, so
+# builders skip it and package builds report it, instead of failing deep inside
+# the compile with an error that does not name the cause. Delete this line when
+# lang/zig reaches 0.17.0; nothing else here needs to change.
+BROKEN=		Requires Zig 0.17.0 or newer; lang/zig is currently 0.16.0
 USES=		zig
 USE_GITHUB=	yes
 GH_ACCOUNT=	orpheus497
@@ -36,7 +46,7 @@ GH_ACCOUNT=	orpheus497
 # arocc packages -- 2.0.2 moved arocc to codeberg and bumped the commit, while
 # zlua's 0.0.0 still points at github.com/Vexu/arocc -- so both aro entries are
 # required and neither can be dropped as a duplicate.
-ZIG_TUPLE=	clap:github.com/Hejsil/zig-clap/archive/fc1e5cc3f6d9d3001112385ee6256d694e959d2f.tar.gz:clap-0.11.0-oBajB7foAQC3Iyn4IVCkUdYaOVVng5IZkSncySTjNig1 \
+ZIG_TUPLE=	clap:github.com/Hejsil/zig-clap/archive/05faf3905e8548f5cc269a8836e154065e70128d.tar.gz:clap-0.12.0-oBajB4XpAQCF1WRKnD5KOKPsnwwT_NNdAJ7Ww3irYJac \
 		zlua:github.com/natecraddock/ziglua/archive/9b9e855e91df9c3d903b5d15ba75e64c8f6ed5f0.tar.gz:zlua-0.1.0-hGRpC2mfBQAGjJIw0bTJnMnxPx6ZQxdCAGMtH13Gl3BP \
 		luajit:github.com/LuaJIT/LuaJIT/archive/18b087cd2cd4ddc4a79782bf155383a689d5093d.tar.gz:N-V-__8AAODpQgCVrpfzE2ze9FA_rOuByh3WKyIyk5iS_o9a \
 		termbox2:github.com/AnErrupTion/termbox2/archive/c7f241e8888ce243e1748b05c26a42fcfaaad936.tar.gz:N-V-__8AAAUXBQD6Fwpi9m0MBqWXFFaqW5l1lVrJC2Ynj7a- \
