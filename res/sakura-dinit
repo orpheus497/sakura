@@ -1,0 +1,9 @@
+# Sakura dinit service.
+type            = process
+restart         = true
+smooth-recovery = true
+command         = $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME
+depends-on      = login.target
+termsignal      = HUP
+# Sakura needs the console while login.target already occupies it.
+options         = shares-console

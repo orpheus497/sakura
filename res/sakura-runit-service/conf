@@ -1,0 +1,12 @@
+# Sourced by run and finish.
+
+if [ -x /sbin/agetty ] || [ -x /bin/agetty ]; then
+	# util-linux only: tty1 usually carries boot output worth keeping.
+	if [ "${TTY}" = "tty1" ]; then
+		GETTY_ARGS="--noclear"
+	fi
+fi
+
+BAUD_RATE=38400
+TERM_NAME=linux
+TTY=tty$DEFAULT_TTY

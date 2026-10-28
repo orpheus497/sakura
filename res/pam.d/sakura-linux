@@ -1,0 +1,44 @@
+#%PAM-1.0
+
+# Linux-PAM policy. Kept separate from the FreeBSD one because it depends on
+# the leading "-" prefix, which OpenPAM did not accept before FreeBSD 15.0 and
+# which is fatal to the whole policy on 14.3 and earlier.
+#
+# Note the prefix means something narrower here than the FreeBSD comment might
+# suggest: on Linux-PAM "-" only suppresses the syslog entry for a module that
+# is not installed. It is "optional" that makes the module non-fatal. Both are
+# used together below, so a distribution missing any of these modules still
+# logs in cleanly and silently.
+#
+# `include login` pulls in the distribution's own stack, which is where
+# pam_securetty, pam_nologin, pam_unix, pam_limits, pam_env, pam_umask,
+# pam_loginuid and pam_selinux come from. Most of what FreeBSD's
+# setusercontext(3) does under LOGIN_SETALL arrives through the session line
+# below rather than from Sakura itself.
+
+auth       include      login
+# Capture the password while it is still in the auth stack, so the keyring or
+# wallet can be unlocked with it.
+-auth      optional     pam_gnome_keyring.so
+-auth      optional     pam_kwallet5.so
+
+account    include      login
+
+password   include      login
+-password  optional     pam_gnome_keyring.so use_authtok
+
+# The single most important Linux-only line: pam_systemd registers the logind
+# session and exports XDG_SESSION_ID, XDG_RUNTIME_DIR, XDG_SEAT and XDG_VTNR.
+# Without it there is no runtime directory, no seat ownership and no DRM-master
+# handover, so Wayland compositors using the libseat-logind backend cannot
+# start. pam_elogind.so is the same thing on elogind distributions; exactly one
+# of the two is ever installed, which is what the "-" prefix is for.
+#
+# No `class=` is given: pam_systemd(8) selects "user" when the class is
+# omitted, which is what Sakura opens -- it execs the session itself rather
+# than staying resident as a greeter.
+-session   optional     pam_systemd.so
+-session   optional     pam_elogind.so
+session    include      login
+-session   optional     pam_gnome_keyring.so auto_start
+-session   optional     pam_kwallet5.so      auto_start

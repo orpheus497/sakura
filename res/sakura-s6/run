@@ -1,0 +1,4 @@
+#!/bin/execlineb -P
+# Sakura s6 service. -L forces local (no carrier detect), -8 forces 8-bit,
+# -n skips the login-name prompt, -l replaces login(1) with Sakura.
+agetty -L -8 -n -l $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME tty$DEFAULT_TTY 115200

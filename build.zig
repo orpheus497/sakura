@@ -8,7 +8,22 @@ const InstallType = enum {
     uninstallnoconf,
 };
 
-const min_zig_string = "0.16.0";
+/// How the host starts Sakura. Deliberately a separate axis from the target
+/// OS: the pre-fork tree folded the two together and made `freebsd` a sibling
+/// of `systemd`, leaving nowhere to express "FreeBSD" and "OpenRC" at once.
+/// FreeBSD uses getty(8) via /etc/ttys and installs no service file, so it has
+/// no entry here.
+const InitSystem = enum {
+    none,
+    systemd,
+    openrc,
+    runit,
+    s6,
+    dinit,
+    sysvinit,
+};
+
+const min_zig_string = "0.17.0";
 const current_zig = builtin.zig_version;
 
 // Implementing zig version detection through compile time
@@ -30,6 +45,7 @@ fn InstallStep(
     prefix_directory: []const u8,
     executable_name: []const u8,
     default_tty_str: []const u8,
+    init_system: InitSystem,
 ) *std.Build.Step.Run {
     const step = b.addRunArtifact(b.addExecutable(.{
         .name = "install",
@@ -47,16 +63,69 @@ fn InstallStep(
         prefix_directory,
         executable_name,
         default_tty_str,
+        // The installer has to know which platform it is installing for: the
+        // PAM policy, the TTY device naming and the start mechanism all differ.
+        @tagName(target.result.os.tag),
+        std.enums.tagName(InitSystem, init_system).?,
     });
 
     return step;
 }
 
 pub fn build(b: *std.Build) !void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    // Sakura supports FreeBSD as its first-class platform and Linux as a
+    // second-class one. Bail out early on anything else with a readable message
+    // instead of letting the build fail somewhere deep inside a C header
+    // translation.
+    switch (target.result.os.tag) {
+        .freebsd, .linux => {},
+        else => {
+            std.debug.print(
+                "error: Sakura supports FreeBSD and Linux, but the requested target is '{t}'.\n",
+                .{target.result.os.tag},
+            );
+            return error.UnsupportedTarget;
+        },
+    }
+
+    // The install layout follows each platform's own convention: FreeBSD puts
+    // ports software under /usr/local with its configuration in
+    // /usr/local/etc (hier(7)), while on Linux the prefix is /usr and
+    // configuration lives in /etc.
+    //
+    // This is not cosmetic. Linux-PAM reads policies only from /etc/pam.d, so
+    // a /usr/local/etc default would install Sakura's policy where PAM never
+    // looks and authentication would fail with an error that does not point at
+    // the cause.
+    const is_freebsd = target.result.os.tag == .freebsd;
+    const default_prefix_directory = if (is_freebsd) "/usr/local" else "/usr";
+    const default_config_directory = if (is_freebsd) "/usr/local/etc" else "/etc";
+
     const dest_directory = b.option([]const u8, "dest_directory", "Specify a destination directory for installation") orelse "";
-    const config_directory = b.option([]const u8, "config_directory", "Specify a default config directory (default is /usr/local/etc). This path gets embedded into the binary") orelse "/usr/local/etc";
-    const prefix_directory = b.option([]const u8, "prefix_directory", "Specify a default prefix directory (default is /usr/local)") orelse "/usr/local";
+    const config_directory = b.option([]const u8, "config_directory", "Specify a default config directory (default is /usr/local/etc on FreeBSD, /etc on Linux). This path gets embedded into the binary") orelse default_config_directory;
+    const prefix_directory = b.option([]const u8, "prefix_directory", "Specify a default prefix directory (default is /usr/local on FreeBSD, /usr on Linux)") orelse default_prefix_directory;
     const executable_name = b.option([]const u8, "name", "Specify installed executable file name (default is sakura)") orelse "sakura";
+
+    // FreeBSD is started by getty(8) from /etc/ttys and needs no service file,
+    // so it defaults to none there. On Linux the default is systemd, as the
+    // most widely deployed, and every other supported init system can be
+    // selected explicitly.
+    const init_system = b.option(
+        InitSystem,
+        "init_system",
+        "Init system to install a service file for: none, systemd, openrc, runit, s6, dinit or sysvinit (Linux only; default is systemd on Linux and none on FreeBSD)",
+    ) orelse if (is_freebsd) InitSystem.none else InitSystem.systemd;
+
+    if (is_freebsd and init_system != .none) {
+        std.debug.print(
+            "error: -Dinit_system is for Linux only; FreeBSD starts Sakura with getty(8) from /etc/ttys.\n",
+            .{},
+        );
+        return error.InitSystemNotApplicable;
+    }
 
     const build_options = b.addOptions();
     const version_str = try getVersionStr(b, "sakura", sakura_version);
@@ -66,14 +135,19 @@ pub fn build(b: *std.Build) !void {
     const uid_min = b.option(std.posix.uid_t, "uid_min", "Set the minimum UID of listed users (default is 1000). This value gets embedded into the binary") orelse 1000;
     const uid_max = b.option(std.posix.uid_t, "uid_max", "Set the maximum UID of listed users (default is 32000). This value gets embedded into the binary") orelse 32000;
 
-    // FreeBSD numbers virtual terminals from 1, so zero is not a terminal.
-    // Reject it here, before it reaches the installer or the binary.
+    // Both kernels number virtual terminals from 1, so zero is not a terminal
+    // on either. Reject it here, before it reaches the installer or the binary.
+    //
+    // There is an upper bound too, and it differs: Linux allows up to 63, while
+    // FreeBSD's vt(4) is capped by VT_MAXWINDOWS (16, default 12). Those are
+    // kernel build-time limits rather than anything this build can read, so
+    // only the shared lower bound is enforced.
     if (default_tty == 0) {
-        std.debug.print("error: -Ddefault_tty must be 1 or greater; FreeBSD numbers virtual terminals from 1.\n", .{});
+        std.debug.print("error: -Ddefault_tty must be 1 or greater; virtual terminals are numbered from 1.\n", .{});
         return error.InvalidDefaultTty;
     }
     if (fallback_tty == 0) {
-        std.debug.print("error: -Dfallback_tty must be 1 or greater; FreeBSD numbers virtual terminals from 1.\n", .{});
+        std.debug.print("error: -Dfallback_tty must be 1 or greater; virtual terminals are numbered from 1.\n", .{});
         return error.InvalidFallbackTty;
     }
 
@@ -87,20 +161,6 @@ pub fn build(b: *std.Build) !void {
     build_options.addOption(std.posix.uid_t, "uid_min", uid_min);
     build_options.addOption(std.posix.uid_t, "uid_max", uid_max);
     build_options.addOption(bool, "enable_x11_support", enable_x11_support);
-
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
-    // Sakura is a FreeBSD-only display manager. Bail out early with a readable
-    // message instead of letting the build fail somewhere deep inside a C
-    // header translation.
-    if (target.result.os.tag != .freebsd) {
-        std.debug.print(
-            "error: Sakura only supports FreeBSD, but the requested target is '{t}'.\n",
-            .{target.result.os.tag},
-        );
-        return error.UnsupportedTarget;
-    }
 
     const exe = b.addExecutable(.{
         .name = "sakura",
@@ -161,6 +221,7 @@ pub fn build(b: *std.Build) !void {
         prefix_directory,
         executable_name,
         default_tty_str,
+        init_system,
     ).step);
 
     const installnoconf_step = b.step("installnoconf", "Install Sakura and its getty wrapper, but not the configuration file");
@@ -173,6 +234,7 @@ pub fn build(b: *std.Build) !void {
         prefix_directory,
         executable_name,
         default_tty_str,
+        init_system,
     ).step);
 
     const uninstallexe_step = b.step("uninstallexe", "Uninstall Sakura, its configuration and its getty wrapper");
@@ -185,6 +247,7 @@ pub fn build(b: *std.Build) !void {
         prefix_directory,
         executable_name,
         default_tty_str,
+        init_system,
     ).step);
 
     const uninstallnoconf_step = b.step("uninstallnoconf", "Uninstall Sakura and its getty wrapper, but keep the configuration directory");
@@ -197,6 +260,7 @@ pub fn build(b: *std.Build) !void {
         prefix_directory,
         executable_name,
         default_tty_str,
+        init_system,
     ).step);
 }
 

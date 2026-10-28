@@ -1,6 +1,6 @@
 const std = @import("std");
 const build_options = @import("build_options");
-const UidRange = @import("UidRange.zig");
+const UidRange = @import("../UidRange.zig");
 const consio = @import("consio");
 const kbio = @import("kbio");
 const pwd = @import("pwd");
@@ -12,7 +12,7 @@ const unistd = @import("unistd");
 
 pub const pam = @import("pam");
 pub const utmp = @import("utmp");
-pub const sysctl = @import("sysctl");
+const sysctl = @import("sysctl");
 // Exists for X11 support only, so it is only imported when X11 support was
 // enabled at build time.
 pub const xcb = if (build_options.enable_x11_support) @import("xcb") else struct {};
@@ -239,4 +239,23 @@ pub fn rebootSystem() !void {
     if (isError(unistd.reboot(reboot.RB_AUTOBOOT))) {
         return error.CouldntReboot;
     }
+}
+
+/// Reads the remaining battery capacity as a percentage. `source` is a sysctl
+/// MIB, e.g. "hw.acpi.battery.life"; see acpi(4). The MIB is CTLTYPE_INT and
+/// reports -1 when no battery is present, so a negative reading is rejected
+/// rather than reported as a charge level.
+pub fn getBatteryPercentage(source: []const u8) !u8 {
+    var mib_buffer: [128]u8 = undefined;
+    const mib_z = std.fmt.bufPrintZ(&mib_buffer, "{s}", .{source}) catch return error.BatterySourceTooLong;
+
+    var capacity: c_int = -1;
+    var size: usize = @sizeOf(c_int);
+
+    const ret = sysctl.sysctlbyname(mib_z.ptr, &capacity, &size, null, 0);
+
+    if (ret != 0) return error.BatteryReadFailed;
+    if (capacity < 0 or capacity > 100) return error.InvalidBatteryCapacity;
+
+    return @intCast(capacity);
 }

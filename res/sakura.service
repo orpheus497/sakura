@@ -1,0 +1,58 @@
+[Unit]
+# Sakura systemd unit.
+#
+# Written from the directives documented in systemd.unit(5), systemd.service(5)
+# and systemd.exec(5). It is deliberately not derived from systemd's own
+# getty@.service, which is LGPL-2.1-or-later; this project is BSD 2-Clause and
+# does not carry copyleft files.
+#
+# Install as an instantiated unit, e.g. sakura@tty2.service, so %I names the
+# terminal to own:
+#
+#     systemctl enable sakura@tty$DEFAULT_TTY.service
+#
+Description=Sakura display manager on %I
+Documentation=https://github.com/orpheus497/sakura
+
+# Wait for user sessions to be allowed and for any boot splash to release the
+# console, and for the plain getty on this terminal to have been started, so
+# the Conflicts below displaces it rather than racing it.
+After=systemd-user-sessions.service plymouth-quit-wait.service getty@%i.service
+
+# Only one program may own a virtual terminal. Stop the plain getty on this
+# terminal, and any kmscon taking the same one.
+Conflicts=getty@%i.service kmsconvt@%i.service
+
+[Service]
+# agetty is what hands the terminal over: -n skips the login-name prompt and
+# -l replaces login(1) with Sakura, which does its own authentication.
+#
+# /sbin/agetty, not a path under the install prefix: agetty belongs to
+# util-linux and is part of the base system, not of Sakura.
+ExecStart=/sbin/agetty -nl $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME %I $TERM
+
+# Type=idle holds the start until other jobs have settled, so boot messages do
+# not scribble over the login UI as it draws.
+Type=idle
+Restart=always
+RestartSec=0
+
+UtmpIdentifier=%I
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/%I
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+
+# A display manager must not die because something downstream closed a pipe.
+IgnoreSIGPIPE=no
+SendSIGHUP=yes
+
+# The console cannot render every locale's messages, and a partially drawn
+# glyph in a login prompt is worse than an untranslated one.
+UnsetEnvironment=LANG LANGUAGE LC_CTYPE LC_NUMERIC LC_TIME LC_COLLATE LC_MONETARY LC_MESSAGES LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION
+
+[Install]
+WantedBy=multi-user.target
+DefaultInstance=tty$DEFAULT_TTY

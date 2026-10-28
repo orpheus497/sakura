@@ -1,0 +1,7 @@
+#!/bin/sh
+# Clear the utmp entry when the service stops, so the terminal is not left
+# showing a logged-in user that is no longer there.
+
+[ -r conf ] && . ./conf
+
+exec utmpset -w "${TTY}"

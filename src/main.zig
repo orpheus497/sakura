@@ -293,7 +293,7 @@ pub fn main(init: std.process.Init) !void {
         migrator.lateConfigFieldHandler(&state.config, state.lang);
     }
 
-    var usernames = try getAllUsernames(state.allocator);
+    var usernames = try getAllUsernames(state.allocator, state.io, state.config.login_defs_path);
     defer {
         for (usernames.items) |username| state.allocator.free(username);
         usernames.deinit(state.allocator);
@@ -1918,8 +1918,14 @@ fn updateCapslock(self: *Label, ptr: *anyopaque) !void {
 fn updateBattery(self: *Label, ptr: *anyopaque) !void {
     var state: *UiState = @ptrCast(@alignCast(ptr));
 
-    if (state.config.battery_sysctl) |mib| {
-        const battery_percentage = getBatteryPercentage(mib) catch |err| {
+    // FreeBSD names the battery with a sysctl MIB and Linux with a
+    // power-supply directory under /sys, so each platform reads its own option
+    // and ignores the other's. Both keys always exist, so a configuration file
+    // moves between a FreeBSD and a Linux host without edits.
+    const battery_source = if (interop.is_freebsd) state.config.battery_sysctl else state.config.battery_id;
+
+    if (battery_source) |source| {
+        const battery_percentage = interop.getBatteryPercentage(source) catch |err| {
             self.update_fn = null;
             try state.log_file.err(
                 state.io,
@@ -2241,7 +2247,7 @@ fn positionSingleWidget(state: *UiState, item: []const u8, current_x: *usize, cu
         }
         return true;
     } else if (std.mem.eql(u8, item, "battery")) {
-        if (state.config.battery_sysctl == null) return false;
+        if ((if (interop.is_freebsd) state.config.battery_sysctl else state.config.battery_id) == null) return false;
         const width = TerminalBuffer.strWidth(state.battery_label.text);
         if (is_left) {
             state.battery_label.positionXY(Position.init(current_x.*, current_y));
@@ -2666,8 +2672,8 @@ fn findSessionByName(session: *Session, name: []const u8) ?usize {
     return null;
 }
 
-fn getAllUsernames(allocator: Allocator) !StringList {
-    const uid_range = interop.getUserIdRange();
+fn getAllUsernames(allocator: Allocator, io: std.Io, login_defs_path: ?[]const u8) !StringList {
+    const uid_range = interop.getUserIdRange(allocator, io, login_defs_path);
 
     var usernames: StringList = .empty;
     var maybe_entry = interop.getNextUsernameEntry();
@@ -2707,23 +2713,6 @@ fn adjustBrightness(io: std.Io, cmd: []const u8) !void {
     if (process_result.exited != 0) {
         return error.BrightnessChangeFailed;
     }
-}
-
-// Reads the remaining battery capacity, as a percentage, from the given
-// sysctl MIB (e.g. "hw.acpi.battery.life").
-fn getBatteryPercentage(mib: []const u8) !u8 {
-    var mib_buffer: [128]u8 = undefined;
-    const mib_z = std.fmt.bufPrintZ(&mib_buffer, "{s}", .{mib}) catch return error.BatterySysctlTooLong;
-
-    var capacity: c_int = -1;
-    var size: usize = @sizeOf(c_int);
-
-    const ret = interop.sysctl.sysctlbyname(mib_z.ptr, &capacity, &size, null, 0);
-
-    if (ret != 0) return error.SysctlFailed;
-    if (capacity < 0 or capacity > 100) return error.InvalidBatteryCapacity;
-
-    return @intCast(capacity);
 }
 
 fn getAuthErrorMsg(err: anyerror, lang: Lang) []const u8 {

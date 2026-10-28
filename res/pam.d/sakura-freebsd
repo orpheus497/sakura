@@ -1,7 +1,11 @@
 #%PAM-1.0
 
-# OpenPAM (used in FreeBSD) doesn't support prepending "-" for ignoring missing
-# modules, so every module referenced here must exist.
+# OpenPAM gained the "-" (non-fatal module) prefix only in FreeBSD 15.0. On
+# 14.3 and earlier an unrecognised facility such as "-session" is a fatal parse
+# error: openpam_configure() fails the entire policy rather than skipping that
+# one line, and nobody can log in. Every module named here must therefore exist
+# on every supported release. The Linux policy is a separate file for exactly
+# this reason -- it depends on that prefix.
 auth       include      login
 account    include      login
 password   include      login
