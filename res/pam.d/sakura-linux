@@ -34,11 +34,25 @@ password   include      login
 # start. pam_elogind.so is the same thing on elogind distributions; exactly one
 # of the two is ever installed, which is what the "-" prefix is for.
 #
-# No `class=` is given: pam_systemd(8) selects "user" when the class is
-# omitted, which is what Sakura opens -- it execs the session itself rather
-# than staying resident as a greeter.
+# Action purpose: both run AFTER `include login`, not before. pam_systemd(8)
+# says of XDG_SESSION_ID that "If auditing is available and pam_loginuid.so was
+# run before this module (which is highly recommended), the variable is
+# initialized from the auditing session id (/proc/self/sessionid). Otherwise, an
+# independent session counter is used." pam_loginuid is in the included login
+# stack named above, so registering the session before it would silently fall
+# back to the private counter and cost the audit correlation. The example stack
+# in pam_systemd(8) orders the two the same way. They still precede the keyring
+# lines below, which need XDG_RUNTIME_DIR to already exist.
+#
+# No `class=` is given. pam_systemd(8) states that with neither the module
+# option nor XDG_SESSION_CLASS set, "the class is automatically chosen,
+# depending on various session parameters, such as the session type (if known),
+# whether the session has a TTY or X11 display, and the user disposition" --
+# and documents `user` as "the default class for sessions for which a TTY or X
+# display is known at session registration time". Sakura registers on a TTY, so
+# that is the case this falls into; it is not an unconditional default.
+session    include      login
 -session   optional     pam_systemd.so
 -session   optional     pam_elogind.so
-session    include      login
 -session   optional     pam_gnome_keyring.so auto_start
 -session   optional     pam_kwallet5.so      auto_start

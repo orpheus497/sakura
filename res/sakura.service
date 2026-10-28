@@ -45,7 +45,15 @@ TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
 
-# A display manager must not die because something downstream closed a pipe.
+# Action purpose: keep the default SIGPIPE disposition rather than ignoring it,
+# as getty@.service does. systemd.exec(5) documents the opposite default for
+# this directive -- "If true, SIGPIPE is ignored in the executed process.
+# Defaults to true since SIGPIPE is generally only useful in shell pipelines."
+# -- so `no` is a deliberate departure. The reason is that Sakura execs the
+# user's session: an ignored disposition survives execve, so ignoring SIGPIPE
+# here would hand SIG_IGN to every program in that session and leave none of
+# them able to die on a closed pipe, breaking the shell-pipeline case the
+# documentation names as the signal's purpose.
 IgnoreSIGPIPE=no
 SendSIGHUP=yes
 
