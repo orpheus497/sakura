@@ -207,7 +207,7 @@ fn getVersionStr(b: *std.Build, name: []const u8, version: std.SemanticVersion) 
     const git_describe_raw = b.runAllowFail(&[_][]const u8{
         "git",
         "-C",
-        b.build_root.path orelse ".",
+        try b.root.toString(b.allocator),
         "describe",
         "--match",
         "*.*.*",

@@ -508,7 +508,7 @@ fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, s
     while (ok != 0) {
         xcb = interop.xcb.xcb_connect(null, null);
         ok = interop.xcb.xcb_connection_has_error(xcb);
-        std.posix.kill(pid, @enumFromInt(0)) catch |e| {
+        std.posix.kill(pid, @fromBackingInt(@intCast(0))) catch |e| {
             if (e == error.ProcessNotFound and ok != 0) return error.XcbConnectionFailed;
         };
     }

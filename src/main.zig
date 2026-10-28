@@ -58,7 +58,7 @@ fn signalHandler(sig: std.posix.SIG) callconv(.c) void {
     }
 
     TerminalBuffer.shutdown() catch {};
-    std.c.exit(@intCast(@intFromEnum(sig)));
+    std.c.exit(@intCast(@backingInt(sig)));
 }
 
 fn ttyControlTransferSignalHandler(_: std.posix.SIG) callconv(.c) void {
@@ -157,8 +157,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var gpa: std.heap.DebugAllocator(.{
-        .never_unmap = builtin.mode == .Debug,
-        .retain_metadata = builtin.mode == .Debug,
+        .never_unmap = builtin.mode == .debug,
+        .retain_metadata = builtin.mode == .debug,
     }) = .init;
     defer if (gpa.deinit() == .leak) std.log.err("attention please, memory has been leaked!", .{});
 
@@ -1313,8 +1313,8 @@ pub fn main(init: std.process.Init) !void {
     var iter = custom.binds.iterator();
     while (iter.next()) |i| {
         var concat = try std.mem.concat(state.allocator, u8, &[_][]const u8{ i.key_ptr.*, " ", i.value_ptr.name });
-        inline for (@typeInfo(Lang).@"struct".fields) |lang_key| {
-            const new = try std.mem.replaceOwned(u8, state.allocator, concat, "$" ++ lang_key.name, @field(state.lang, lang_key.name));
+        inline for (@typeInfo(Lang).@"struct".field_names) |lang_key| {
+            const new = try std.mem.replaceOwned(u8, state.allocator, concat, "$" ++ lang_key, @field(state.lang, lang_key));
             state.allocator.free(concat);
             concat = new;
         }

@@ -10,6 +10,11 @@ WWW=		https://github.com/orpheus497/sakura
 LICENSE=	BSD2CLAUSE
 LICENSE_FILE=	${WRKSRC}/license.md
 
+# Sakura needs Zig 0.17.0 or newer: it uses @splat for array repetition (the **
+# operator is gone), std.Build's `root` field, the lowercase std.lang.Optimize
+# tags and the field_names/field_types reflection shape, none of which exist in
+# 0.16.x. USES=zig takes whatever lang/zig currently is, so if the ports tree is
+# still on 0.16.x this port cannot build until lang/zig is updated.
 USES=		zig
 USE_GITHUB=	yes
 GH_ACCOUNT=	orpheus497
@@ -24,19 +29,23 @@ GH_ACCOUNT=	orpheus497
 # dependency change; it may need running more than once to pull in transitive
 # dependencies.
 #
-# Two entries are not named in any manifest a reader would think to check:
+# Three entries are not named in any manifest a reader would think to check:
 # luajit arrives lazily beneath zlua because the build requests .lang = .luajit,
-# and translate_c 0.0.0 is zlua's own copy, distinct from the 1.0.0 that
-# sakura-ui and sakura-core use.
+# and translate_c 0.0.0 is zlua's own copy, distinct from the 2.0.2 that
+# sakura-ui and sakura-core use. Those two translate_c copies pull *different*
+# arocc packages -- 2.0.2 moved arocc to codeberg and bumped the commit, while
+# zlua's 0.0.0 still points at github.com/Vexu/arocc -- so both aro entries are
+# required and neither can be dropped as a duplicate.
 ZIG_TUPLE=	clap:github.com/Hejsil/zig-clap/archive/fc1e5cc3f6d9d3001112385ee6256d694e959d2f.tar.gz:clap-0.11.0-oBajB7foAQC3Iyn4IVCkUdYaOVVng5IZkSncySTjNig1 \
 		zlua:github.com/natecraddock/ziglua/archive/8f271c82baa5fc43aa02a72f6da020c2025d9436.tar.gz:zlua-0.1.0-hGRpC2aABQD4D9PBVH3wAW8k32-I4969MRQ0CpOwoley \
 		luajit:github.com/LuaJIT/LuaJIT/archive/18b087cd2cd4ddc4a79782bf155383a689d5093d.tar.gz:N-V-__8AAODpQgCVrpfzE2ze9FA_rOuByh3WKyIyk5iS_o9a \
 		termbox2:github.com/AnErrupTion/termbox2/archive/c7f241e8888ce243e1748b05c26a42fcfaaad936.tar.gz:N-V-__8AAAUXBQD6Fwpi9m0MBqWXFFaqW5l1lVrJC2Ynj7a- \
 		zigini:github.com/AshAmetrine/zigini/archive/a665d081dda42664a96da2840ea09c5ccf9d0692.tar.gz:zigini-0.5.0-BSkB7e9WAACfyCBABNZiWL3gFMw18GKn3qBcPs8L1Ec1 \
 		ini:github.com/AshAmetrine/ziglibs-ini/archive/3b733e10adc6c4c48050709b97a22258bc2e6156.tar.gz:ini-0.1.0-YCQ9YiwsAACghqF8LZyjAF2H_NnL6n29QLuCe0fsmPTo \
-		translate_c:codeberg.org/ziglang/translate-c/archive/6fe0ffc4549f15c5f2d9432c2b4460ba90ff85ac.tar.gz:translate_c-1.0.0-Q_BUWo_5BgD4flHdUhA31zOz0XvZk9k7lQv1ouzyNXj2 \
+		translate_c:codeberg.org/ziglang/translate-c/archive/cfac21f3199b2b02ce3fd7db652aa456421fe4ab.tar.gz:translate_c-2.0.2-Q_BUWvBNBwDnyehSiuAJmdFcMYHYGA-Jc3KiYdrV2Dqx \
 		translate_c_zlua:codeberg.org/ziglang/translate-c/archive/46b5609b5ac4c0a896217d1d984f3ae50e4810b5.tar.gz:translate_c-0.0.0-Q_BUWpf0BgAwrh5AM-acJcslN_YPEhcoCVKbbNjwuUTJ \
-		aro:github.com/Vexu/arocc/archive/5f5a050569a95ecc40a426f0c3666ae7ef987ede.tar.gz:aro-0.0.0-JSD1Qi7QNgDnfcrdEJf82v3o6MhZySjYVrtdfEf3E4Se
+		aro:codeberg.org/ziglang/arocc/archive/630d99ed60fe61ccabe721f1af60881f8b2adde3.tar.gz:aro-0.0.0-JSD1QvCRNwC2O1Jkop9TO6sXb1U1vhrH8FnYK1VdEMKn \
+		aro_zlua:github.com/Vexu/arocc/archive/5f5a050569a95ecc40a426f0c3666ae7ef987ede.tar.gz:aro-0.0.0-JSD1Qi7QNgDnfcrdEJf82v3o6MhZySjYVrtdfEf3E4Se
 
 OPTIONS_DEFINE=		X11
 OPTIONS_DEFAULT=	X11

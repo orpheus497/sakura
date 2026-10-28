@@ -118,7 +118,7 @@ sessions you might launch, not for Sakura.
 
 | Package | Why |
 | --- | --- |
-| `zig` | 0.16.x, and it must be a **release** build — check that `zig version` has no `-dev` suffix |
+| `zig` | 0.17.x, and it must be a **release** build — check that `zig version` has no `-dev` suffix. If `pkg`'s `zig` is older than 0.17.0, install the upstream release instead (see below) |
 | `libxcb` | Only with X11 support, which is on by default. Turn it off with `-Denable_x11_support=false` |
 | `pkgconf` | Only with X11 support. Zig resolves `xcb` through pkg-config, and `xcb.pc` lives in `/usr/local/libdata/pkgconfig` |
 | `ca_root_nss` | So Zig can fetch its dependencies over HTTPS |
@@ -148,6 +148,31 @@ So a build with X11 support needs:
 ```sh
 # pkg install zig pkgconf libxcb ca_root_nss
 ```
+
+Check what you got, because Sakura needs 0.17.0 or newer and the package set can
+lag behind upstream:
+
+```sh
+$ zig version
+```
+
+If that prints anything below 0.17.0, fetch the upstream release instead of the
+packaged one. The official downloads include FreeBSD builds, and verifying the
+checksum against `https://ziglang.org/download/index.json` is worth the extra
+step:
+
+```sh
+$ fetch https://ziglang.org/download/0.17.0/zig-x86_64-freebsd-0.17.0.tar.xz
+```
+
+```sh
+$ sha256 -q zig-x86_64-freebsd-0.17.0.tar.xz
+```
+
+That digest must equal
+`a314f1cc92d098bd39caf9e5607a0de2a8fd0d00064776cb3fd5b3bee38a67c9`. Then unpack
+it and put the resulting directory on your `PATH`. This is exactly what CI does,
+so it is the configuration the project is actually tested against.
 
 and, if you intend to run X11 sessions:
 

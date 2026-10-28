@@ -2,7 +2,7 @@
     .name = .sakura,
     .version = "1.0.0",
     .fingerprint = 0x018710325dc2cb59,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .sakura_ui = .{
             .path = "sakura-ui",
@@ -12,7 +12,14 @@
             .hash = "clap-0.11.0-oBajB7foAQC3Iyn4IVCkUdYaOVVng5IZkSncySTjNig1",
         },
         .zlua = .{
-            .url = "git+https://github.com/natecraddock/ziglua?ref=zig-0.16#8f271c82baa5fc43aa02a72f6da020c2025d9436",
+            // No "?ref=" here, unlike the other git dependencies: upstream has no
+            // zig-0.16 or zig-0.17 branch (its version branches stop at
+            // zig-0.15.2), so the ref this used to name did not exist. Zig never
+            // read it -- the fetcher takes the ref from the URL fragment and
+            // never parses the query -- but a ref that resolves to nothing is an
+            // invitation to "fix" it with another wrong one. The fragment below
+            // is the commit, and .hash is the source of truth regardless.
+            .url = "git+https://github.com/natecraddock/ziglua#8f271c82baa5fc43aa02a72f6da020c2025d9436",
             .hash = "zlua-0.1.0-hGRpC2aABQD4D9PBVH3wAW8k32-I4969MRQ0CpOwoley",
         },
     },
