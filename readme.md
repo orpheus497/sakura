@@ -242,8 +242,10 @@ zig build run
 
 > [!IMPORTANT]
 > While you can run Sakura in a terminal emulator as root, it is **not**
-> recommended. To properly test Sakura, install it, wire it up in `/etc/ttys`
-> as described below, and reboot.
+> recommended. To properly test Sakura, install it, hand it a virtual terminal
+> and reboot. How differs by platform: on FreeBSD, wire it up in `/etc/ttys` as
+> described below; on Linux there is no `/etc/ttys`, so install a service file
+> instead — see [Enabling it on Linux](#linux-1).
 
 > [!NOTE]
 > You can, however, test configuration file changes that way. Note that you
@@ -255,7 +257,7 @@ zig build run
 # zig build installexe
 ```
 
-This installs:
+This installs, **on FreeBSD** — the Linux layout differs and is below:
 
 | Path | Contents |
 | --- | --- |
@@ -274,8 +276,29 @@ This installs:
 | `/usr/local/etc/pam.d/sakura` | the PAM policy used for normal logins |
 | `/usr/local/etc/pam.d/sakura-autologin` | the PAM policy used for autologin |
 
+#### Linux layout
+
+Two of those columns change and three rows disappear. The prefix is `/usr` and
+the configuration root `/etc`, so the binary lands at `/usr/bin/sakura`, the
+configuration under `/etc/sakura/`, and the PAM policies at `/etc/pam.d/sakura`
+and `/etc/pam.d/sakura-autologin`.
+
+The three entries that exist only on FreeBSD are not installed at all, because
+nothing on Linux consumes them:
+
+| Not installed on Linux | Why |
+| --- | --- |
+| `sakura_wrapper` | It exists to swallow the `login -fp root` arguments FreeBSD's `getty(8)` appends. Linux hands the terminal over with `agetty -l`, which appends nothing |
+| `gettytab.example` | `/etc/gettytab` is a FreeBSD file |
+| `ttys.example` | `/etc/ttys` is a FreeBSD file |
+
+In their place Linux gets one service file for the init system chosen with
+`-Dinit_system`. See [Enabling it on Linux](#linux-1) for where each lands and
+the command to enable it.
+
 The defaults follow the FreeBSD ports layout (`--prefix` is `/usr/local` and
-the configuration lives under `/usr/local/etc`). Both can be overridden:
+the configuration lives under `/usr/local/etc`), with the Linux defaults as
+above. Both can be overridden:
 
 ```sh
 # zig build installexe -Dprefix_directory=/usr/local -Dconfig_directory=/usr/local/etc
@@ -409,15 +432,19 @@ from `PATH` at start-up, preferring `agetty` and falling back to `getty`, and
 refuse to start with a message naming the cause if neither is present.
 
 > [!NOTE]
-> **One assumption remains, and it is worth stating because it is unverified.**
-> These scripts pass the positional arguments in `agetty`'s order — port, then
-> baud rate, then terminal type. A `getty` that is not a symlink to `agetty`
-> may document a different order, in which case the fallback would start but
-> mis-parse its arguments. Preferring `agetty` avoids this wherever both exist,
-> which covers every util-linux system; it cannot help on a userland that
-> ships only its own `getty`, such as a busybox one. Nobody has yet run Sakura
-> on such a host, so this is a known gap rather than a known failure — if you
-> try it, the result is worth reporting either way.
+> **The `getty` fallback does not fit a busybox userland, and that is now
+> established rather than suspected.** These scripts pass the positional
+> arguments in `agetty`'s order — port, then baud rate, then terminal type.
+> BusyBox documents its own applet as `getty [OPTIONS] BAUD_RATE [TTY]`, baud
+> rate **first**, and defines no `--noclear`. So on a host that ships only
+> BusyBox's `getty`, the fallback would start and then mis-parse its arguments.
+>
+> Preferring `agetty` closes this wherever both exist, which covers every
+> util-linux system, and keeps `--noclear` away from an applet that would
+> reject it. It cannot close the busybox-only case: that needs the argument
+> order chosen per implementation, which is worth doing when someone actually
+> wants Sakura on such a host. Nobody has asked yet, so it is recorded here
+> rather than built on speculation.
 
 ## Platform differences
 
@@ -463,7 +490,10 @@ accounts will not be listed.
 
 **`utmp` may do nothing on Linux.** Sakura writes a login record, but systemd
 has made `utmp` optional and distributions are retiring `/run/utmp`. A failure
-to write it is logged and ignored rather than failing the login.
+to write it is **ignored silently** — `src/auth.zig` discards what
+`pututxline(3)` returns and does not log it — so the login succeeds either way,
+and `who` or `last` simply will not show the session. This is the behaviour on
+both platforms, not a Linux concession.
 
 ## Updating
 
