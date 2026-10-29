@@ -209,8 +209,24 @@ and, if you intend to run X11 sessions:
 ### Linux
 
 Package names differ per distribution and are **not** interchangeable, so each
-is given separately. Zig 0.17.0 is needed on every one of them; see the note
-above about fetching the upstream release when the archive's version is older.
+is given separately. Zig 0.17.0 is needed on every one of them.
+
+Where a distribution's package is older, fetch the upstream release — but
+**not** with the command in the FreeBSD section above, which downloads
+`zig-x86_64-freebsd-0.17.0.tar.xz` and would leave you with a FreeBSD
+executable. Take the Linux archive for your architecture instead:
+
+```sh
+# x86_64; substitute aarch64 as needed
+curl -LO https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
+tar xf zig-x86_64-linux-0.17.0.tar.xz
+export PATH="$PWD/zig-x86_64-linux-0.17.0:$PATH"
+zig version   # must print 0.17.0
+```
+
+Checksums for every archive are published in
+<https://ziglang.org/download/index.json>; CI verifies the one it fetches
+before unpacking it, and so should you.
 
 | Need | Arch | Fedora | Debian/Ubuntu |
 | --- | --- | --- | --- |
@@ -316,7 +332,7 @@ just editing `config.ini`.
 | `prefix_directory` | `/usr/local` on FreeBSD, `/usr` on Linux | Install prefix. *Embedded* — it is also the default for `x_cmd`, `xauth_cmd`, `xsessions` and `waylandsessions` |
 | `config_directory` | `/usr/local/etc` on FreeBSD, `/etc` on Linux | Configuration root. *Embedded* — it is also the default for `custom_sessions`, `save_file_dir`, `setup_cmd`, `gif_file`, `dur_file_path` and `lua_animation_file`. **On Linux this must resolve to `/etc` on the target host.** It is not a preference: Linux-PAM reads policies only from the directory libpam was built with, normally `/etc/pam.d`, and the openrc, sysvinit, dinit and runit service files are installed relative to this root too. Point it elsewhere and the build still succeeds while PAM and the init system find nothing — login then fails at run time. Use `dest_directory` for staged packaging, which prefixes the staging root and leaves this path alone |
 | `init_system` | `systemd` on Linux, `none` on FreeBSD | **Linux only.** Which init system to install a service file for: `systemd`, `openrc`, `runit`, `s6`, `dinit`, `sysvinit`, or `none`. FreeBSD uses `getty(8)` from `/etc/ttys` and installs no service file |
-| `name` | `sakura` | Renames **only** the installed binary and its getty wrapper. The configuration directory, both PAM policies and the default `service_name` stay `sakura` |
+| `name` | `sakura` | Renames **only** the installed binary and its getty wrapper. The configuration directory, both PAM policies, every init-system service file and the default `service_name` all stay `sakura` — so the enable commands below are correct whatever you set this to |
 | `enable_x11_support` | `true` | Links `libxcb` for X11 sessions. Set `false` for a Wayland- or console-only build, which then needs neither `libxcb` nor `pkgconf` |
 | `default_tty` | `2` | The virtual terminal Sakura is installed onto. Fills in the generated `gettytab.example` and `ttys.example` on FreeBSD, and the service file on Linux. Must be 1 or greater on both. Note the device naming differs: VT 2 is `/dev/ttyv1` on FreeBSD and `/dev/tty2` on Linux |
 | `fallback_tty` | `2` | *Embedded.* The terminal to fall back to if the current one cannot be determined |
@@ -427,9 +443,16 @@ particular **the s6 service is not an execline script.** It was one, which made
 `execline` an undocumented dependency at a hardcoded `/bin/execlineb`; it is
 plain `sh` now, and `s6-supervise` execs the `run` file whatever its shebang.
 
-The five non-systemd scripts resolve the program that hands over the terminal
-from `PATH` at start-up, preferring `agetty` and falling back to `getty`, and
-refuse to start with a message naming the cause if neither is present.
+The five non-systemd services split into two kinds, which matters because only
+the first kind involves a `getty` at all:
+
+| Service | How Sakura is started |
+| --- | --- |
+| `openrc`, `runit`, `s6` | Through a **getty**, resolved from `PATH` at start-up — `agetty` preferred, `getty` as the fallback — which hands the terminal over with `-l`. Each refuses to start with a message naming the cause if neither is present |
+| `sysvinit`, `dinit` | **Directly.** The SysV script `exec setsid`s the binary with stdin and stdout on the terminal; the dinit description names it as `command`. No getty is resolved, so the note below does not apply to either |
+
+The systemd unit is a third case again: it invokes `/sbin/agetty` by absolute
+path from `ExecStart`, since a unit file cannot resolve a program at run time.
 
 > [!NOTE]
 > **The `getty` fallback does not fit a busybox userland, and that is now

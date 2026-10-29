@@ -1,4 +1,6 @@
-# Sakura dinit service.
+# Script function and purpose: dinit service description. Declarative, and
+# like the SysV script it launches Sakura directly rather than through a
+# getty, so it resolves no terminal-handover program.
 type            = process
 restart         = true
 smooth-recovery = true

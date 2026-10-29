@@ -1,5 +1,7 @@
 #!/sbin/openrc-run
-# Sakura OpenRC service.
+# Script function and purpose: OpenRC service that hands virtual terminal
+# $DEFAULT_TTY to Sakura, supervised by supervise-daemon so a crash is
+# restarted rather than leaving the terminal without a login prompt.
 
 name="sakura"
 description="Sakura display manager"

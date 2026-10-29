@@ -325,12 +325,26 @@ pub fn closePasswordDatabase() void {
 pub fn getUserIdRange(allocator: std.mem.Allocator, io: std.Io, path: []const u8) UidRange {
     var range: UidRange = .{};
 
-    var file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch return range;
+    // Action purpose: openFile, not openFileAbsolute. The latter opens with
+    // `assert(path.isAbsolute(...))` (std/Io/Dir.zig:585), and an assert is
+    // `if (!ok) unreachable` -- not an error, so the `catch return range`
+    // below cannot intercept it. `path` comes straight from config.ini with
+    // no validation, so a relative `login_defs_path` would panic Sakura
+    // before it drew a login prompt in any build with runtime safety on, and
+    // be undefined behaviour without. openFile takes the same absolute paths
+    // (openFileAbsolute itself just delegates to it) and returns an error for
+    // a relative one that does not resolve, which is what the catch expects.
+    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return range;
     defer file.close(io);
 
+    // Action purpose: bound the read. login.defs(5) is a few dozen lines of
+    // key-value pairs; 1 MiB is already orders of magnitude more than any real
+    // one. Unbounded, a path pointed at something huge -- by a typo as much as
+    // by malice -- would be read wholly into memory during startup. Exceeding
+    // the limit lands in the same fallback as an unreadable file.
     var file_buffer: [4096]u8 = undefined;
     var file_reader = file.reader(io, &file_buffer);
-    const contents = file_reader.interface.allocRemaining(allocator, .unlimited) catch return range;
+    const contents = file_reader.interface.allocRemaining(allocator, .limited(1 << 20)) catch return range;
     defer allocator.free(contents);
 
     var lines = std.mem.splitScalar(u8, contents, '\n');

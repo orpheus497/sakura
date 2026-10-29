@@ -1,4 +1,7 @@
 #!/bin/sh
+# Script function and purpose: SysV init script that starts Sakura directly
+# on virtual terminal $DEFAULT_TTY -- no getty is involved, unlike the
+# openrc, runit and s6 services. start-stop-daemon supervises the pid.
 ### BEGIN INIT INFO
 # Provides:          sakura
 # Required-Start:    $remote_fs $syslog
@@ -21,7 +24,13 @@ DESC="Sakura display manager"
 case "$1" in
   start)
     log_daemon_msg "Starting $DESC on $TTY"
-    if [ -f "$PIDFILE" ]; then
+    # Action purpose: test liveness, not the mere existence of the pidfile. If
+    # Sakura crashes, the pidfile outlives it; `[ -f ]` then reported "already
+    # running" and exited 0, so the init system called a start successful while
+    # the terminal had no login prompt and nothing retried. --status reports 0
+    # only when the recorded process is actually alive, and treats a stale
+    # pidfile as not running.
+    if start-stop-daemon --status --pidfile "$PIDFILE"; then
         log_progress_msg "$DESC is already running"
         log_end_msg 0
         exit 0

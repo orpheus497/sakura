@@ -1,4 +1,6 @@
-# Sourced by run and finish.
+# Script function and purpose: shared settings for the runit service,
+# sourced by both run and finish. Holds nothing executable on purpose, so
+# that sourcing it twice is harmless.
 
 BAUD_RATE=38400
 TERM_NAME=linux

@@ -1,5 +1,6 @@
 #!/bin/sh
-# Sakura runit service.
+# Script function and purpose: runit run script. Resolves the getty to use,
+# then execs it so runsv supervises Sakura itself rather than this shell.
 
 [ -r conf ] && . ./conf
 

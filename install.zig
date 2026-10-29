@@ -305,9 +305,17 @@ fn installInitSystem(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchM
             try installServiceFile(allocator, io, patch_map, prefix_directory, "/lib/systemd/system", "res/sakura.service", "sakura@.service", 0o644);
         },
 
-        .openrc => try installServiceFile(allocator, io, patch_map, config_directory, "/init.d", "res/sakura-openrc", executable_name, 0o755),
-        .sysvinit => try installServiceFile(allocator, io, patch_map, config_directory, "/init.d", "res/sakura-sysvinit", executable_name, 0o755),
-        .dinit => try installServiceFile(allocator, io, patch_map, config_directory, "/dinit.d", "res/sakura-dinit", executable_name, 0o644),
+        // Action purpose: the service file is named "sakura", not
+        // executable_name. -Dname renames the binary and its getty wrapper and
+        // nothing else -- the configuration directory, both PAM policies and
+        // service_name all stay "sakura", as the readme's option table states.
+        // These three used executable_name, so -Dname=foo wrote /etc/init.d/foo
+        // while every documented enable command still said sakura, leaving the
+        // service installed and permanently disabled. runit and s6 already used
+        // fixed names, so this also makes the five consistent.
+        .openrc => try installServiceFile(allocator, io, patch_map, config_directory, "/init.d", "res/sakura-openrc", "sakura", 0o755),
+        .sysvinit => try installServiceFile(allocator, io, patch_map, config_directory, "/init.d", "res/sakura-sysvinit", "sakura", 0o755),
+        .dinit => try installServiceFile(allocator, io, patch_map, config_directory, "/dinit.d", "res/sakura-dinit", "sakura", 0o644),
 
         .runit => {
             const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/sv/sakura" });
@@ -370,6 +378,11 @@ fn installInitSystem(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchM
     }
 }
 
+// Function purpose: write one patched service file into a directory that may
+// not exist yet, which is every init system's install except runit's and s6's
+// -- those need a whole directory of files, so they build it inline instead of
+// calling this. Takes the prefix separately because systemd units belong under
+// prefix_directory while the rest live under config_directory.
 fn installServiceFile(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -400,8 +413,8 @@ fn uninstallInitSystem(allocator: std.mem.Allocator, io: std.Io) !void {
     switch (init_system) {
         .none => {},
         .systemd => try deleteFile(allocator, io, prefix_directory, "/lib/systemd/system/", "sakura@.service", "systemd unit not found"),
-        .openrc, .sysvinit => try deleteFile(allocator, io, config_directory, "/init.d/", executable_name, "init script not found"),
-        .dinit => try deleteFile(allocator, io, config_directory, "/dinit.d/", executable_name, "dinit service not found"),
+        .openrc, .sysvinit => try deleteFile(allocator, io, config_directory, "/init.d/", "sakura", "init script not found"),
+        .dinit => try deleteFile(allocator, io, config_directory, "/dinit.d/", "sakura", "dinit service not found"),
         .runit => try deleteTree(allocator, io, config_directory, "/sv/sakura", "runit service not found"),
         .s6 => {
             try deleteTree(allocator, io, config_directory, "/s6/sv/sakura-srv", "s6 service not found");
@@ -413,9 +426,20 @@ fn uninstallInitSystem(allocator: std.mem.Allocator, io: std.Io) !void {
 // Function purpose: tell the administrator the one step the installer cannot
 // take, which differs per init system.
 fn printLinuxInstructions(tty_device: []const u8) void {
+    // Action purpose: the systemd hint names the real instance. It used to
+    // print the literal "sakura@<tty>.service", and `<tty>` is shell
+    // redirection -- pasting the line gave a syntax error rather than enabling
+    // anything. tty_device is already a parameter, so the instance is known.
+    var systemd_buffer: [128]u8 = undefined;
+    const systemd_hint = std.fmt.bufPrint(
+        &systemd_buffer,
+        "      systemctl enable --now sakura@{s}.service",
+        .{tty_device},
+    ) catch "      systemctl enable --now sakura@<the tty above>.service";
+
     const enable_hint = switch (init_system) {
         .none => "      Select an init system with -Dinit_system to have a service file installed.",
-        .systemd => "      systemctl enable --now sakura@" ++ "<tty>" ++ ".service",
+        .systemd => systemd_hint,
         .openrc => "      rc-update add sakura default",
         .runit => "      ln -s /etc/sv/sakura /var/service/",
         .s6 => "      s6-rc-bundle-update add default sakura-srv",
