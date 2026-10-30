@@ -464,7 +464,7 @@ the first kind involves a `getty` at all:
 | Service | How Sakura is started |
 | --- | --- |
 | `openrc`, `runit`, `s6` | Through a **getty**, resolved from `PATH` at start-up — `agetty` preferred, `getty` as the fallback — which hands the terminal over with `-l`. Each refuses to start with a message naming the cause if neither is present |
-| `sysvinit`, `dinit` | **Directly**, with no getty, so the note below does not apply to either. Both run `setsid` and then open `/dev/ttyN` *from inside the new session*, which is what gives Sakura the terminal as its **controlling terminal** — see the note on that below |
+| `sysvinit`, `dinit` | **Directly**, with no getty, so the note below does not apply to either. Both open `/dev/ttyN` *from inside a new session*, which is what gives Sakura the terminal as its **controlling terminal** — the SysV script calls `setsid` itself, while the dinit service relies on dinit calling `setsid()` for it. See the note below |
 
 The systemd unit is a third case again: it invokes `/sbin/agetty` by absolute
 path from `ExecStart`, since a unit file cannot resolve a program at run time.
@@ -489,13 +489,32 @@ path from `ExecStart`, since a unit file cannot resolve a program at run time.
 > prints a warning, **exits 0, and never runs the program at all**, so the init
 > system records a successful start with no login prompt.
 >
-> dinit needs this for a second reason. It has no per-service device setting:
+> dinit needs the redirection for a second reason, and must **not** add a
+> `setsid` of its own. It has no per-service device setting:
 > `dinit-service(5)` defines a console service's device as *"the device to
 > which `dinit`'s standard output stream is connected"*, and `inittab-line`
 > only *"specifies the tty line that will be written to the \"utmp\"
-> database"*. So `shares-console` alone would hand Sakura dinit's console
+> database"*. So a console option alone would hand Sakura dinit's console
 > rather than the terminal reserved for it, and `getActiveTty()` — which asks
 > `TIOCGDEV` what device is behind stdin — would report that one.
+>
+> But the service declares **no console option at all**, which is what makes
+> the plain redirection work. `dinit`'s `src/run-child-proc.cc` branches on
+> `on_console`, set by both `starts-on-console` and `shares-console`:
+>
+> ```c
+> if (!on_console) { ... setsid(); }   // child becomes a session leader
+> else { ...; setpgid(0,0); ... }      // child becomes a group leader
+> ```
+>
+> With a console option the child leads its process group, and `setsid(1)`
+> **forks** when its caller already does — so dinit would supervise a parent
+> that exits at once and, with `restart = true`, restart it forever. With no
+> console option dinit calls `setsid()` itself and the shell opens the
+> terminal as session leader, so the pid is preserved and the terminal is
+> acquired. This is why the two services differ: the SysV script supplies its
+> own `setsid` because `start-stop-daemon` does not, and the dinit service
+> must not, because dinit does.
 
 > [!NOTE]
 > **The `getty` fallback does not fit a busybox userland, and that is now

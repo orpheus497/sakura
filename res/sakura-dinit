@@ -4,34 +4,39 @@
 type            = process
 restart         = true
 smooth-recovery = true
-# Action purpose: bind Sakura to the terminal the installer reserved, and make
-# that terminal its controlling terminal. dinit has no per-service device
-# setting -- dinit-service(5) defines a console service's device as "the device
+# Action purpose: bind Sakura to the terminal the installer reserved, and let
+# dinit's own setsid() make the shell a session leader, so that opening that
+# terminal establishes it as Sakura's controlling terminal.
+#
+# The device has to be bound here because dinit has no per-service device
+# setting: dinit-service(5) defines a console service's device as "the device
 # to which dinit's standard output stream is connected", and inittab-line only
-# "specifies the tty line that will be written to the \"utmp\" database" -- so
-# shares-console on its own hands Sakura dinit's console rather than
-# /dev/tty$DEFAULT_TTY. getActiveTty() asks TIOCGDEV which device is behind
-# stdin, so that is the terminal Sakura would believe it owns: it would draw
-# its prompt on the wrong one, or find none at all.
+# "specifies the tty line that will be written to the \"utmp\" database". The
+# shell is needed because dinit execs the command directly and does not
+# interpret redirections itself.
 #
-# setsid comes before the redirection on purpose. credentials(7): "The
-# controlling terminal is established when the session leader first opens a
-# terminal (unless the O_NOCTTY flag is specified when calling open(2))." The
-# inner shell is therefore the session leader at the moment it opens the
-# terminal, and the kernel assigns it on the open -- confirmed under strace:
-# ctty acquired, zero TIOCSCTTY calls. Not `setsid --ctty`: when its ioctl is
-# refused, it warns, exits 0 and never runs the program at all.
+# No setsid here, and no console option, both deliberately. dinit's
+# src/run-child-proc.cc branches on on_console, which starts-on-console and
+# shares-console both set:
 #
-# The double quotes are dinit's own grouping, which it strips; the single
-# quotes are not special to dinit and reach the shell intact. Every placeholder
-# is replaced at install time, so the installed file contains no dollar sign at
-# all and dinit's variable substitution has nothing to consume. The pid is
-# preserved through both execs, so dinit supervises Sakura itself rather than a
-# wrapper that has exited.
-command         = /bin/sh -c "exec setsid /bin/sh -c 'exec $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME </dev/tty$DEFAULT_TTY >/dev/tty$DEFAULT_TTY 2>&1'"
+#     if (!on_console) { ... setsid(); }   <- child becomes a SESSION leader
+#     else { ...; setpgid(0,0); ... }      <- child becomes a GROUP leader
+#
+# So with shares-console the child leads its process group, and util-linux
+# setsid(1) forks when its caller already does -- measured -- which would
+# leave dinit supervising a parent that exits at once and, with restart = true,
+# restarting it forever. With no console option dinit calls setsid() itself,
+# the shell opens the terminal as session leader, and credentials(7) applies:
+# "The controlling terminal is established when the session leader first opens
+# a terminal (unless the O_NOCTTY flag is specified when calling open(2))."
+# Measured that way: the pid is preserved, so dinit supervises Sakura itself,
+# and the terminal is acquired.
+#
+# Dropping shares-console costs nothing here. It existed to share a console
+# Sakura no longer takes, and a service with no console option neither queues
+# for the console nor blocks services that hold it. dinit's non-console branch
+# also points stdin at /dev/null and stdout at a logfile before exec; the
+# redirection below replaces all three.
+command         = /bin/sh -c "exec $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME </dev/tty$DEFAULT_TTY >/dev/tty$DEFAULT_TTY 2>&1"
 depends-on      = login.target
 termsignal      = HUP
-# shares-console no longer decides which terminal Sakura gets -- the
-# redirection above does -- but it is kept so Sakura neither queues behind nor
-# blocks services that hold the console exclusively.
-options         = shares-console
