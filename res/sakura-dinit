@@ -38,5 +38,23 @@ smooth-recovery = true
 # also points stdin at /dev/null and stdout at a logfile before exec; the
 # redirection below replaces all three.
 command         = /bin/sh -c "exec $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME </dev/tty$DEFAULT_TTY >/dev/tty$DEFAULT_TTY 2>&1"
-depends-on      = login.target
+# Action purpose: order against login.target without depending on it, because
+# login.target is not dinit's. It appears nowhere in dinit-service(5) or
+# dinit(8) -- the only service names those document as special are `boot` and
+# `recovery` -- so it comes from a distribution's service set, and this
+# installer does not ship it.
+#
+# depends-on was wrong on its own terms, whether or not the target exists.
+# dinit-service(5) makes it a "need" relationship: "Starting this service will
+# start the named service ... If the named service stops then this service will
+# also be stopped." Sakura owns its own terminal and needs nothing from that
+# target, so being stopped whenever it stops is a liability, not a safeguard.
+#
+# after gives the ordering alone: "if the named service is not starting,
+# starting this service will not cause it to start (nor wait for it in that
+# case). It does not by itself cause the named service to be loaded." So where
+# a distribution provides login.target, Sakura still starts after it; where
+# none exists, the line costs nothing. waits-for was rejected because it
+# "will automatically start the named service", which is not ours to start.
+after           = login.target
 termsignal      = HUP

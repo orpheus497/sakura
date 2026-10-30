@@ -594,8 +594,40 @@ You can install Sakura without overriding the current configuration file:
 # zig build uninstallexe
 ```
 
-`uninstallnoconf` does the same but keeps `/usr/local/etc/sakura`. Neither
-touches `/etc/gettytab` or `/etc/ttys`, so remember to revert those by hand.
+`uninstallnoconf` does the same but keeps the configuration directory
+(`/usr/local/etc/sakura` on FreeBSD, `/etc/sakura` on Linux). Neither touches
+`/etc/gettytab` or `/etc/ttys`, so on FreeBSD remember to revert those by hand.
+
+> [!IMPORTANT]
+> **On Linux, stop and disable the service before uninstalling, not after.**
+> The uninstall removes the service file *and the binary*, but it does not stop
+> anything that is already running — and with systemd, deleting a unit file
+> does not unload the running unit. `res/sakura.service` sets `Restart=always`
+> with `RestartSec=0`, and `ExecStart` runs `agetty -nl <the Sakura binary>`,
+> so once the session ends systemd restarts agetty and it cannot exec a login
+> program that is no longer there. Meanwhile `Conflicts=getty@%i.service`
+> keeps the ordinary getty off that terminal. The result is a terminal with no
+> login prompt.
+>
+> Run these *first*, for each instance you enabled — `systemctl disable` can
+> fail once the unit file has been deleted:
+>
+> ```sh
+> systemctl disable --now sakura@ttyN.service
+> ```
+>
+> ```sh
+> systemctl start getty@ttyN.service
+> ```
+>
+> Replace `N` with the terminal number. On the other init systems, disable the
+> service with the counterpart of the enable command in
+> [Enabling it on Linux](#linux-1) and re-enable whatever previously owned the
+> terminal, again before uninstalling.
+>
+> The installer deliberately does not do this for you: it writes and removes
+> files, and shelling out to a service manager would break staged packaging,
+> where the build host is not the host the service runs on.
 
 ## Configuration
 
@@ -608,8 +640,19 @@ You can check the validity of your configuration file (i.e. whether there are
 any errors in it) with:
 
 ```sh
+# FreeBSD
 sakura --validate-config /usr/local/etc/sakura/config.ini
 ```
+
+```sh
+# Linux
+sakura --validate-config /etc/sakura/config.ini
+```
+
+The path differs because the configuration root does: `--config` defaults to
+`/usr/local/etc/sakura` on FreeBSD and `/etc/sakura` on Linux, and
+`--validate-config` names a file inside it. See
+[Linux layout](#linux-layout).
 
 Logs are defined by that same file:
 
@@ -624,7 +667,7 @@ Logs are defined by that same file:
 | --- | --- | --- |
 | `-h`, `--help` | — | List the options and exit |
 | `-v`, `--version` | — | Print the version and exit |
-| `-c`, `--config` | a **directory** | Read the configuration from there instead of `/usr/local/etc/sakura`. Sakura looks inside it for `config.ini`, `lang/` and the save file |
+| `-c`, `--config` | a **directory** | Read the configuration from there instead of the default — `/usr/local/etc/sakura` on FreeBSD, `/etc/sakura` on Linux. Sakura looks inside it for `config.ini`, `lang/` and the save file |
 | `--validate-config` | a **file** | Check a configuration file for errors and exit |
 
 The two path options differ deliberately: `--config` points at a directory
@@ -1226,6 +1269,7 @@ there lists the supported keys.
 ### Sakura will not start after I edited the configuration
 
 ```sh
+# FreeBSD; on Linux the path is /etc/sakura/config.ini
 sakura --validate-config /usr/local/etc/sakura/config.ini
 ```
 
