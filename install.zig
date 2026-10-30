@@ -8,11 +8,34 @@ const InstallType = enum {
     uninstallnoconf,
 };
 
+/// Which operating system the build targets. This is deliberately a separate
+/// axis from `InitSystem`: the pre-fork tree folded the two together and made
+/// `freebsd` a sibling of `systemd`, which is a category error -- it leaves
+/// nowhere to say "FreeBSD" and "OpenRC" at once.
+const TargetOs = enum {
+    freebsd,
+    linux,
+};
+
+/// How the host starts Sakura. FreeBSD uses getty(8) driven by /etc/ttys and
+/// has no service file, so it has no entry here.
+const InitSystem = enum {
+    none,
+    systemd,
+    openrc,
+    runit,
+    s6,
+    dinit,
+    sysvinit,
+};
+
 var dest_directory: []const u8 = undefined;
 var config_directory: []const u8 = undefined;
 var prefix_directory: []const u8 = undefined;
 var executable_name: []const u8 = undefined;
 var wrapper_name: []const u8 = undefined;
+var target_os: TargetOs = undefined;
+var init_system: InitSystem = undefined;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -27,17 +50,25 @@ pub fn main(init: std.process.Init) !void {
     prefix_directory = args.next().?;
     executable_name = args.next().?;
     const default_tty_str = args.next().?;
+    target_os = std.meta.stringToEnum(TargetOs, args.next().?).?;
+    init_system = std.meta.stringToEnum(InitSystem, args.next().?).?;
 
     wrapper_name = try std.fmt.allocPrint(allocator, "{s}_wrapper", .{executable_name});
     defer allocator.free(wrapper_name);
 
     switch (install_type) {
         .installexe, .installnoconf => {
-            // FreeBSD numbers virtual terminals from 1, but names the device
-            // nodes backing them from 0, using a single hexadecimal digit:
-            // VT 2 is /dev/ttyv1, VT 11 is /dev/ttyva.
+            // The two kernels name virtual terminal devices differently, and
+            // both halves differ: FreeBSD numbers terminals from 1 but names
+            // the nodes from 0 in base 32 (VT 2 is /dev/ttyv1, VT 11 is
+            // /dev/ttyva), while Linux names them in decimal with no offset
+            // (VT 2 is /dev/tty2). Base 32 and hex agree over every reachable
+            // index because VT_MAXWINDOWS is at most 16.
             const default_tty = std.fmt.parseInt(u8, default_tty_str, 10) catch 2;
-            const tty_device = try std.fmt.allocPrint(allocator, "ttyv{x}", .{default_tty -| 1});
+            const tty_device = switch (target_os) {
+                .freebsd => try std.fmt.allocPrint(allocator, "ttyv{x}", .{default_tty -| 1}),
+                .linux => try std.fmt.allocPrint(allocator, "tty{d}", .{default_tty}),
+            };
             defer allocator.free(tty_device);
 
             var patch_map = PatchMap.init(allocator);
@@ -51,20 +82,32 @@ pub fn main(init: std.process.Init) !void {
             try patch_map.put("$WRAPPER_NAME", wrapper_name);
 
             try installSakura(allocator, io, patch_map, install_type == .installexe);
-            try installGettyWrapper(allocator, io, patch_map);
 
-            std.debug.print(
-                \\
-                \\info: Sakura is installed. Two steps are left, both of which
-                \\      have a ready-made snippet in {s}/sakura:
-                \\
-                \\      1. Append the contents of gettytab.example to /etc/gettytab
-                \\      2. Replace the {s} line in /etc/ttys with the one in ttys.example
-                \\
-                \\      Then run `kill -HUP 1` or reboot.
-                \\
-                \\
-            , .{ config_directory, tty_device });
+            switch (target_os) {
+                // FreeBSD is started by getty(8) out of /etc/ttys, so what gets
+                // installed is the wrapper getty executes plus the two snippets
+                // the administrator has to paste in.
+                .freebsd => {
+                    try installGettyWrapper(allocator, io, patch_map);
+
+                    std.debug.print(
+                        \\
+                        \\info: Sakura is installed. Two steps are left, both of which
+                        \\      have a ready-made snippet in {s}/sakura:
+                        \\
+                        \\      1. Append the contents of gettytab.example to /etc/gettytab
+                        \\      2. Replace the {s} line in /etc/ttys with the one in ttys.example
+                        \\
+                        \\      Then run `kill -HUP 1` or reboot.
+                        \\
+                        \\
+                    , .{ config_directory, tty_device });
+                },
+                .linux => {
+                    try installInitSystem(allocator, io, patch_map);
+                    printLinuxInstructions(tty_device);
+                },
+            }
         },
         .uninstallexe, .uninstallnoconf => {
             if (install_type == .uninstallexe) {
@@ -72,9 +115,13 @@ pub fn main(init: std.process.Init) !void {
             }
 
             try deleteFile(allocator, io, prefix_directory, "/bin/", executable_name, "sakura executable not found");
-            try deleteFile(allocator, io, prefix_directory, "/bin/", wrapper_name, "getty wrapper not found");
             try deleteFile(allocator, io, config_directory, "/pam.d/", "sakura", "sakura pam file not found");
             try deleteFile(allocator, io, config_directory, "/pam.d/", "sakura-autologin", "sakura autologin pam file not found");
+
+            switch (target_os) {
+                .freebsd => try deleteFile(allocator, io, prefix_directory, "/bin/", wrapper_name, "getty wrapper not found"),
+                .linux => try uninstallInitSystem(allocator, io),
+            }
         },
     }
 }
@@ -140,16 +187,21 @@ fn installSakura(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, 
 
         try installText(io, patched_setup, config_dir, sakura_config_directory, "setup.sh", .{ .permissions = .fromMode(0o755) });
 
-        // Ready-made /etc/gettytab and /etc/ttys snippets for the administrator
-        const patched_gettytab = try patchFile(allocator, io, "res/sakura.gettytab", patch_map);
-        defer allocator.free(patched_gettytab);
+        // Ready-made /etc/gettytab and /etc/ttys snippets for the
+        // administrator. Both describe files that exist only on FreeBSD, so
+        // there is nothing to install them for on Linux, where the init system
+        // handles startup instead.
+        if (target_os == .freebsd) {
+            const patched_gettytab = try patchFile(allocator, io, "res/sakura.gettytab", patch_map);
+            defer allocator.free(patched_gettytab);
 
-        try installText(io, patched_gettytab, config_dir, sakura_config_directory, "gettytab.example", .{});
+            try installText(io, patched_gettytab, config_dir, sakura_config_directory, "gettytab.example", .{});
 
-        const patched_ttys = try patchFile(allocator, io, "res/sakura.ttys", patch_map);
-        defer allocator.free(patched_ttys);
+            const patched_ttys = try patchFile(allocator, io, "res/sakura.ttys", patch_map);
+            defer allocator.free(patched_ttys);
 
-        try installText(io, patched_ttys, config_dir, sakura_config_directory, "ttys.example", .{});
+            try installText(io, patched_ttys, config_dir, sakura_config_directory, "ttys.example", .{});
+        }
 
         try installFile(io, "res/example.dur", config_dir, sakura_config_directory, "example.dur", .{ .permissions = .fromMode(0o755) });
 
@@ -220,9 +272,194 @@ fn installSakura(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, 
         var pam_dir = std.Io.Dir.cwd().openDir(io, pam_path, .{}) catch unreachable;
         defer pam_dir.close(io);
 
-        try installFile(io, "res/pam.d/sakura", pam_dir, pam_path, "sakura", .{ .permissions = .fromMode(0o644) });
-        try installFile(io, "res/pam.d/sakura-autologin", pam_dir, pam_path, "sakura-autologin", .{ .permissions = .fromMode(0o644) });
+        // The two policies cannot be merged: the Linux one relies on the
+        // leading "-" prefix for modules that may not be installed, and on
+        // FreeBSD 14.3 and earlier that prefix is a fatal parse error which
+        // discards the whole policy. The *installed* names stay fixed, so
+        // Config.zig's service_name/auto_login_service defaults and the
+        // documentation remain correct on both platforms.
+        const policy, const autologin_policy = switch (target_os) {
+            .freebsd => .{ "res/pam.d/sakura-freebsd", "res/pam.d/sakura-freebsd-autologin" },
+            .linux => .{ "res/pam.d/sakura-linux", "res/pam.d/sakura-linux-autologin" },
+        };
+
+        try installFile(io, policy, pam_dir, pam_path, "sakura", .{ .permissions = .fromMode(0o644) });
+        try installFile(io, autologin_policy, pam_dir, pam_path, "sakura-autologin", .{ .permissions = .fromMode(0o644) });
     }
+}
+
+// Function purpose: install the service file for the host's init system. Each
+// one is a separate file under res/ rather than a generated template, so what
+// lands on disk is reviewable as-is.
+fn installInitSystem(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap) !void {
+    switch (init_system) {
+        .none => std.debug.print(
+            "warn: no init system selected, so no service file was installed. Pass -Dinit_system to install one.\n",
+            .{},
+        ),
+
+        .systemd => {
+            // Units belong under the prefix, not in /etc: /etc/systemd/system
+            // is the administrator's directory and a package must not write
+            // there.
+            try installServiceFile(allocator, io, patch_map, prefix_directory, "/lib/systemd/system", "res/sakura.service", "sakura@.service", 0o644);
+        },
+
+        // Action purpose: the service file is named "sakura", not
+        // executable_name. -Dname renames the binary and its getty wrapper and
+        // nothing else -- the configuration directory, both PAM policies and
+        // service_name all stay "sakura", as the readme's option table states.
+        // These three used executable_name, so -Dname=foo wrote /etc/init.d/foo
+        // while every documented enable command still said sakura, leaving the
+        // service installed and permanently disabled. runit and s6 already used
+        // fixed names, so this also makes the five consistent.
+        .openrc => try installServiceFile(allocator, io, patch_map, config_directory, "/init.d", "res/sakura-openrc", "sakura", 0o755),
+        .sysvinit => try installServiceFile(allocator, io, patch_map, config_directory, "/init.d", "res/sakura-sysvinit", "sakura", 0o755),
+        .dinit => try installServiceFile(allocator, io, patch_map, config_directory, "/dinit.d", "res/sakura-dinit", "sakura", 0o644),
+
+        .runit => {
+            const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/sv/sakura" });
+            defer allocator.free(service_path);
+
+            std.Io.Dir.cwd().createDirPath(io, service_path) catch {};
+            var service_dir = std.Io.Dir.cwd().openDir(io, service_path, .{}) catch unreachable;
+            defer service_dir.close(io);
+
+            const patched_conf = try patchFile(allocator, io, "res/sakura-runit-service/conf", patch_map);
+            defer allocator.free(patched_conf);
+            try installText(io, patched_conf, service_dir, service_path, "conf", .{});
+
+            const patched_run = try patchFile(allocator, io, "res/sakura-runit-service/run", patch_map);
+            defer allocator.free(patched_run);
+            try installText(io, patched_run, service_dir, service_path, "run", .{ .permissions = .fromMode(0o755) });
+
+            try installFile(io, "res/sakura-runit-service/finish", service_dir, service_path, "finish", .{ .permissions = .fromMode(0o755) });
+
+            // runit keeps its supervise state on a tmpfs, so the service
+            // directory points at it rather than holding it.
+            const supervise_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ service_path, "supervise" });
+            defer allocator.free(supervise_path);
+
+            std.Io.Dir.cwd().symLink(io, "/run/runit/supervise.sakura", supervise_path, .{}) catch |err| {
+                if (err != error.PathAlreadyExists) return err;
+                std.debug.print("warn: {s} already exists.\n", .{supervise_path});
+                return;
+            };
+            std.debug.print("info: installed symlink {s}\n", .{supervise_path});
+        },
+
+        .s6 => {
+            const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/s6/sv/sakura-srv" });
+            defer allocator.free(service_path);
+
+            std.Io.Dir.cwd().createDirPath(io, service_path) catch {};
+            var service_dir = std.Io.Dir.cwd().openDir(io, service_path, .{}) catch unreachable;
+            defer service_dir.close(io);
+
+            const patched_run = try patchFile(allocator, io, "res/sakura-s6/run", patch_map);
+            defer allocator.free(patched_run);
+            try installText(io, patched_run, service_dir, service_path, "run", .{ .permissions = .fromMode(0o755) });
+
+            try installFile(io, "res/sakura-s6/type", service_dir, service_path, "type", .{});
+
+            // s6-rc needs the service listed in a bundle's contents.d before it
+            // will be brought up.
+            const admin_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, config_directory, "/s6/adminsv/default/contents.d" });
+            defer allocator.free(admin_path);
+
+            std.Io.Dir.cwd().createDirPath(io, admin_path) catch {};
+            var admin_dir = std.Io.Dir.cwd().openDir(io, admin_path, .{}) catch unreachable;
+            defer admin_dir.close(io);
+
+            var file = try admin_dir.createFile(io, "sakura-srv", .{});
+            file.close(io);
+            std.debug.print("info: installed {s}/sakura-srv\n", .{admin_path});
+        },
+    }
+}
+
+// Function purpose: write one patched service file into a directory that may
+// not exist yet, which is every init system's install except runit's and s6's
+// -- those need a whole directory of files, so they build it inline instead of
+// calling this. Takes the prefix separately because systemd units belong under
+// prefix_directory while the rest live under config_directory.
+fn installServiceFile(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    patch_map: PatchMap,
+    prefix: []const u8,
+    directory: []const u8,
+    source: []const u8,
+    destination: []const u8,
+    mode: std.Io.File.Mode,
+) !void {
+    const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, prefix, directory });
+    defer allocator.free(service_path);
+
+    std.Io.Dir.cwd().createDirPath(io, service_path) catch {};
+    var service_dir = std.Io.Dir.cwd().openDir(io, service_path, .{}) catch unreachable;
+    defer service_dir.close(io);
+
+    const patched = try patchFile(allocator, io, source, patch_map);
+    defer allocator.free(patched);
+
+    try installText(io, patched, service_dir, service_path, destination, .{ .permissions = .fromMode(mode) });
+}
+
+// Function purpose: remove whatever installInitSystem put down. Kept in step
+// with it by hand, since an uninstall that misses a file leaves the host
+// starting a binary that is no longer there.
+fn uninstallInitSystem(allocator: std.mem.Allocator, io: std.Io) !void {
+    switch (init_system) {
+        .none => {},
+        .systemd => try deleteFile(allocator, io, prefix_directory, "/lib/systemd/system/", "sakura@.service", "systemd unit not found"),
+        .openrc, .sysvinit => try deleteFile(allocator, io, config_directory, "/init.d/", "sakura", "init script not found"),
+        .dinit => try deleteFile(allocator, io, config_directory, "/dinit.d/", "sakura", "dinit service not found"),
+        .runit => try deleteTree(allocator, io, config_directory, "/sv/sakura", "runit service not found"),
+        .s6 => {
+            try deleteTree(allocator, io, config_directory, "/s6/sv/sakura-srv", "s6 service not found");
+            try deleteFile(allocator, io, config_directory, "/s6/adminsv/default/contents.d/", "sakura-srv", "s6 bundle entry not found");
+        },
+    }
+}
+
+// Function purpose: tell the administrator the one step the installer cannot
+// take, which differs per init system.
+fn printLinuxInstructions(tty_device: []const u8) void {
+    // Action purpose: the systemd hint names the real instance. It used to
+    // print the literal "sakura@<tty>.service", and `<tty>` is shell
+    // redirection -- pasting the line gave a syntax error rather than enabling
+    // anything. tty_device is already a parameter, so the instance is known.
+    var systemd_buffer: [128]u8 = undefined;
+    const systemd_hint = std.fmt.bufPrint(
+        &systemd_buffer,
+        "      systemctl enable --now sakura@{s}.service",
+        .{tty_device},
+    ) catch "      systemctl enable --now sakura@<the tty above>.service";
+
+    const enable_hint = switch (init_system) {
+        .none => "      Select an init system with -Dinit_system to have a service file installed.",
+        .systemd => systemd_hint,
+        .openrc => "      rc-update add sakura default",
+        .runit => "      ln -s /etc/sv/sakura /var/service/",
+        .s6 => "      s6-rc-bundle-update add default sakura-srv",
+        .dinit => "      dinitctl enable sakura",
+        .sysvinit => "      update-rc.d sakura defaults",
+    };
+
+    std.debug.print(
+        \\
+        \\info: Sakura is installed. One step is left: enable it, and make sure
+        \\      nothing else is already holding /dev/{s}.
+        \\
+        \\{s}
+        \\
+        \\      A getty on that terminal will fight Sakura for it. The systemd
+        \\      unit declares the conflict itself; on the others, disable the
+        \\      getty for that terminal by hand.
+        \\
+        \\
+    , .{ tty_device, enable_hint });
 }
 
 // On FreeBSD, getty(8) appends "login -fp root" to the program named by the

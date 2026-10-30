@@ -54,11 +54,6 @@ const removed_properties = [_][]const u8{
     "hide_keyboard_locks",
     "hide_version_string",
     "show_tty",
-    // Linux-only options, dropped when Sakura became FreeBSD-only
-    "login_defs_path",
-    // The Linux sysfs battery identifier has no FreeBSD equivalent; the
-    // replacement option (battery_sysctl) takes a sysctl MIB instead
-    "battery_id",
 };
 
 pub var auto_eight_colors: bool = true;

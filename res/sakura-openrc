@@ -1,0 +1,48 @@
+#!/sbin/openrc-run
+# Script function and purpose: OpenRC service that hands virtual terminal
+# $DEFAULT_TTY to Sakura, supervised by supervise-daemon so a crash is
+# restarted rather than leaving the terminal without a login prompt.
+
+name="sakura"
+description="Sakura display manager"
+
+supervisor=supervise-daemon
+respawn_period=60
+pidfile=/run/"${RC_SVCNAME}.pid"
+
+# Action purpose: the program that hands the terminal over is getty on busybox
+# systems and agetty on util-linux ones. Resolve whichever is on PATH instead
+# of testing fixed directories and then assuming /sbin: a host carrying only
+# /bin/getty was previously handed /sbin/getty, which is not there, and a host
+# with neither was handed an empty command. Both fail at start-up with nothing
+# naming the cause, so start_pre below rejects the second case explicitly.
+#
+# agetty is preferred over getty, not merely first: these scripts pass the
+# positional arguments in agetty's order (port, then baud, then term type).
+# A `getty` that is not a symlink to agetty -- busybox's, notably -- documents
+# a different positional order, so where both names exist the one whose
+# argument order matches is the one to run. On a busybox-only host getty is all
+# there is; see the s6 script's note and the readme on that limitation.
+GETTY=$(command -v agetty || command -v getty || true)
+
+TTY="tty$DEFAULT_TTY"
+TERM_NAME=linux
+BAUD=38400
+
+command="${GETTY}"
+# -n skips the login-name prompt; -l replaces login(1) with Sakura, which does
+# its own authentication.
+command_args_foreground="-nl $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME ${TTY} ${BAUD} ${TERM_NAME}"
+
+start_pre() {
+	if [ -z "${GETTY}" ]; then
+		eerror "Neither getty nor agetty was found on PATH."
+		return 1
+	fi
+}
+
+depend() {
+	after agetty
+	provide display-manager
+	want elogind
+}

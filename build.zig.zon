@@ -2,18 +2,26 @@
     .name = .sakura,
     .version = "1.0.0",
     .fingerprint = 0x018710325dc2cb59,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .sakura_ui = .{
             .path = "sakura-ui",
         },
         .clap = .{
-            .url = "git+https://github.com/Hejsil/zig-clap#fc1e5cc3f6d9d3001112385ee6256d694e959d2f",
-            .hash = "clap-0.11.0-oBajB7foAQC3Iyn4IVCkUdYaOVVng5IZkSncySTjNig1",
+            .url = "git+https://github.com/Hejsil/zig-clap#05faf3905e8548f5cc269a8836e154065e70128d",
+            .hash = "clap-0.12.0-oBajB4XpAQCF1WRKnD5KOKPsnwwT_NNdAJ7Ww3irYJac",
         },
         .zlua = .{
-            .url = "git+https://github.com/natecraddock/ziglua?ref=zig-0.16#8f271c82baa5fc43aa02a72f6da020c2025d9436",
-            .hash = "zlua-0.1.0-hGRpC2aABQD4D9PBVH3wAW8k32-I4969MRQ0CpOwoley",
+            // Pinned to a commit on main, with no "?ref=" unlike the other git
+            // dependencies, because upstream publishes no branch for this Zig
+            // version: its version branches stop at zig-0.15.2, and 0.17.0
+            // support exists only on main. The previous pin named ?ref=zig-0.16,
+            // a branch that has never existed; Zig did not care, since the
+            // fetcher reads the ref from the URL fragment and never parses the
+            // query string, but a ref resolving to nothing invites someone to
+            // replace it with another wrong one. .hash is the source of truth.
+            .url = "git+https://github.com/natecraddock/ziglua#9b9e855e91df9c3d903b5d15ba75e64c8f6ed5f0",
+            .hash = "zlua-0.1.0-hGRpC2mfBQAGjJIw0bTJnMnxPx6ZQxdCAGMtH13Gl3BP",
         },
     },
     .paths = .{

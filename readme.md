@@ -5,14 +5,20 @@
 _Note: Sakura ships with an animated wallpaper, drawn on the console with
 half-block characters. See [The wallpaper](#the-wallpaper) below._
 
-Sakura is a lightweight TUI (ncurses-like) display manager built exclusively
-for FreeBSD. It runs on a virtual terminal, talks to OpenPAM directly, and does
-not depend on a graphical toolkit, a session bus, or a login-manager framework.
+Sakura is a lightweight TUI (ncurses-like) display manager built for FreeBSD,
+and supported on Linux. It runs on a virtual terminal, talks to PAM directly,
+and does not depend on a graphical toolkit, a session bus, or a login-manager
+framework.
 
-Sakura only targets FreeBSD. The build refuses any other target on purpose: all
-the console, power-management and account handling goes through FreeBSD
-interfaces (`vt(4)`, `kbio(4)`, `consio(4)`, `reboot(2)`, `setusercontext(3)`
-and `sysctl(3)`) rather than through a portability layer.
+FreeBSD is the first-class platform and Linux the second: both work, but FreeBSD
+wins design ties. The build refuses any other target on purpose. Console,
+power-management and account handling go straight to each kernel's own
+interfaces — `vt(4)`, `kbio(4)`, `consio(4)`, `reboot(2)`, `setusercontext(3)`
+and `sysctl(3)` on FreeBSD; `linux/vt.h`, `linux/kd.h`, `reboot(2)`,
+`login.defs(5)` and sysfs on Linux — rather than through a lowest-common-
+denominator portability layer. Everything platform-specific lives in one place,
+`sakura-core/src/interop/`, and the differences that remain visible to users are
+listed under [Platform differences](#platform-differences).
 
 Sakura is also the login layer of the **Sakura desktop**, a four-part Wayland
 desktop environment built specifically for FreeBSD alongside
@@ -107,6 +113,26 @@ once the next has taken over:
 Setting the desktop up from Sakura's side is covered in
 [Running hikari-sakura](#running-hikari-sakura) under Sessions.
 
+## Platforms
+
+| Platform | Status |
+| --- | --- |
+| FreeBSD | **First-class.** The platform Sakura is designed for and tested on. |
+| Linux | **Supported, second-class.** Builds and passes the test suite on Ubuntu, Arch and Fedora in CI; FreeBSD wins design ties. See the caveat below. |
+
+> **What "supported" does and does not claim on Linux.** CI builds Sakura, runs
+> its tests and validates the shipped `config.ini` on three Linux
+> distributions. It cannot exercise a login: a PAM conversation, a virtual
+> terminal switch, a `utmp` write and session setup all need a real console,
+> and none of them has been run on Linux hardware yet. Treat the Linux port as
+> compiling and self-consistent rather than as proven in service, and please
+> report what happens when you try it.
+
+Everything below documents FreeBSD first. Where Linux differs, there is a
+**Linux** subsection saying how — and where the two genuinely cannot behave
+identically, that is stated rather than glossed over. See
+[Platform differences](#platform-differences).
+
 ## Dependencies
 
 Sakura itself needs very little. Shutdown, reboot, virtual terminal switching
@@ -118,7 +144,7 @@ sessions you might launch, not for Sakura.
 
 | Package | Why |
 | --- | --- |
-| `zig` | 0.16.x, and it must be a **release** build — check that `zig version` has no `-dev` suffix |
+| `zig` | 0.17.x, and it must be a **release** build — check that `zig version` has no `-dev` suffix. If `pkg`'s `zig` is older than 0.17.0, install the upstream release instead (see below) |
 | `libxcb` | Only with X11 support, which is on by default. Turn it off with `-Denable_x11_support=false` |
 | `pkgconf` | Only with X11 support. Zig resolves `xcb` through pkg-config, and `xcb.pc` lives in `/usr/local/libdata/pkgconfig` |
 | `ca_root_nss` | So Zig can fetch its dependencies over HTTPS |
@@ -149,11 +175,86 @@ So a build with X11 support needs:
 # pkg install zig pkgconf libxcb ca_root_nss
 ```
 
+Check what you got, because Sakura needs 0.17.0 or newer and the package set can
+lag behind upstream:
+
+```sh
+$ zig version
+```
+
+If that prints anything below 0.17.0, fetch the upstream release instead of the
+packaged one. The official downloads include FreeBSD builds, and verifying the
+checksum against `https://ziglang.org/download/index.json` is worth the extra
+step:
+
+```sh
+$ fetch https://ziglang.org/download/0.17.0/zig-x86_64-freebsd-0.17.0.tar.xz
+```
+
+```sh
+$ sha256 -q zig-x86_64-freebsd-0.17.0.tar.xz
+```
+
+That digest must equal
+`a314f1cc92d098bd39caf9e5607a0de2a8fd0d00064776cb3fd5b3bee38a67c9`. Then unpack
+it and put the resulting directory on your `PATH`. This is exactly what CI does,
+so it is the configuration the project is actually tested against.
+
 and, if you intend to run X11 sessions:
 
 ```sh
 # pkg install xorg xauth
 ```
+
+### Linux
+
+Package names differ per distribution and are **not** interchangeable, so each
+is given separately. Zig 0.17.0 is needed on every one of them.
+
+Where a distribution's package is older, fetch the upstream release — but
+**not** with the command in the FreeBSD section above, which downloads
+`zig-x86_64-freebsd-0.17.0.tar.xz` and would leave you with a FreeBSD
+executable. Take the Linux archive for your architecture instead, and verify it
+*before* extracting it:
+
+```sh
+curl -LO https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
+echo "1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026  zig-x86_64-linux-0.17.0.tar.xz" \
+  | sha256sum -c - \
+  && tar xf zig-x86_64-linux-0.17.0.tar.xz \
+  && export PATH="$PWD/zig-x86_64-linux-0.17.0:$PATH" \
+  && zig version   # must print 0.17.0
+```
+
+The `&&` chain is the point rather than a flourish: `sha256sum -c` exits
+non-zero and prints `FAILED` on a mismatch, so a bad download is never
+unpacked and no unverified binary is ever run. Pasting the block whole is
+therefore safe in a way that running the commands one by one is not.
+
+For aarch64, substitute both the file name and the digest:
+
+| Archive | sha256 |
+| --- | --- |
+| `zig-x86_64-linux-0.17.0.tar.xz` | `1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026` |
+| `zig-aarch64-linux-0.17.0.tar.xz` | `9e8d11661d4ae3bd57702a3832781e23ad151dde5798e16a5ccd503f65234ff8` |
+
+Both digests come from <https://ziglang.org/download/index.json>, which
+publishes one for every archive. CI does the same check on the FreeBSD tarball
+it fetches: `.github/workflows/ci.yml` compares against `ZIG_FREEBSD_SHA256`
+and exits before unpacking on a mismatch.
+
+| Need | Arch | Fedora | Debian/Ubuntu |
+| --- | --- | --- | --- |
+| PAM headers | `pam` | `pam-devel` | `libpam0g-dev` |
+| libxcb headers | `libxcb` | `libxcb-devel` | `libxcb1-dev` |
+| pkg-config | `pkgconf` | `pkgconf-pkg-config` | `pkgconf` |
+| C compiler, libc headers | `base-devel` | `gcc` `glibc-devel` | `build-essential` `libc6-dev` |
+
+On Arch, install `pkgconf` and not `pkg-config`: the two conflict, and `pkgconf`
+replaces the other.
+
+Unlike FreeBSD, where PAM is in the base system, Linux needs the PAM
+development headers installed explicitly.
 
 ## Building
 
@@ -172,8 +273,10 @@ zig build run
 
 > [!IMPORTANT]
 > While you can run Sakura in a terminal emulator as root, it is **not**
-> recommended. To properly test Sakura, install it, wire it up in `/etc/ttys`
-> as described below, and reboot.
+> recommended. To properly test Sakura, install it, hand it a virtual terminal
+> and reboot. How differs by platform: on FreeBSD, wire it up in `/etc/ttys` as
+> described below; on Linux there is no `/etc/ttys`, so install a service file
+> instead — see [Enabling it on Linux](#linux-1).
 
 > [!NOTE]
 > You can, however, test configuration file changes that way. Note that you
@@ -185,7 +288,7 @@ zig build run
 # zig build installexe
 ```
 
-This installs:
+This installs, **on FreeBSD** — the Linux layout differs and is below:
 
 | Path | Contents |
 | --- | --- |
@@ -204,8 +307,29 @@ This installs:
 | `/usr/local/etc/pam.d/sakura` | the PAM policy used for normal logins |
 | `/usr/local/etc/pam.d/sakura-autologin` | the PAM policy used for autologin |
 
+#### Linux layout
+
+Two of those columns change and three rows disappear. The prefix is `/usr` and
+the configuration root `/etc`, so the binary lands at `/usr/bin/sakura`, the
+configuration under `/etc/sakura/`, and the PAM policies at `/etc/pam.d/sakura`
+and `/etc/pam.d/sakura-autologin`.
+
+The three entries that exist only on FreeBSD are not installed at all, because
+nothing on Linux consumes them:
+
+| Not installed on Linux | Why |
+| --- | --- |
+| `sakura_wrapper` | It exists to swallow the `login -fp root` arguments FreeBSD's `getty(8)` appends. Linux hands the terminal over with `agetty -l`, which appends nothing |
+| `gettytab.example` | `/etc/gettytab` is a FreeBSD file |
+| `ttys.example` | `/etc/ttys` is a FreeBSD file |
+
+In their place Linux gets one service file for the init system chosen with
+`-Dinit_system`. See [Enabling it on Linux](#linux-1) for where each lands and
+the command to enable it.
+
 The defaults follow the FreeBSD ports layout (`--prefix` is `/usr/local` and
-the configuration lives under `/usr/local/etc`). Both can be overridden:
+the configuration lives under `/usr/local/etc`), with the Linux defaults as
+above. Both can be overridden:
 
 ```sh
 # zig build installexe -Dprefix_directory=/usr/local -Dconfig_directory=/usr/local/etc
@@ -220,14 +344,15 @@ just editing `config.ini`.
 | Option | Default | What it does |
 | --- | --- | --- |
 | `dest_directory` | *(empty)* | Staging root. Every installed path is written beneath it instead of `/`. This is the `DESTDIR` equivalent a package build uses; it does not affect paths compiled into the binary |
-| `prefix_directory` | `/usr/local` | Install prefix. *Embedded* — it is also the default for `x_cmd`, `xauth_cmd`, `xsessions` and `waylandsessions` |
-| `config_directory` | `/usr/local/etc` | Configuration root. *Embedded* — it is also the default for `custom_sessions`, `save_file_dir`, `setup_cmd`, `gif_file`, `dur_file_path` and `lua_animation_file` |
-| `name` | `sakura` | Renames **only** the installed binary and its getty wrapper. The configuration directory, both PAM policies and the default `service_name` stay `sakura` |
+| `prefix_directory` | `/usr/local` on FreeBSD, `/usr` on Linux | Install prefix. *Embedded* — it is also the default for `x_cmd`, `xauth_cmd`, `xsessions` and `waylandsessions` |
+| `config_directory` | `/usr/local/etc` on FreeBSD, `/etc` on Linux | Configuration root. *Embedded* — it is also the default for `custom_sessions`, `save_file_dir`, `setup_cmd`, `gif_file`, `dur_file_path` and `lua_animation_file`. **On Linux this must resolve to `/etc` on the target host.** It is not a preference: Linux-PAM reads policies only from the directory libpam was built with, normally `/etc/pam.d`, and the openrc, sysvinit, dinit and runit service files are installed relative to this root too. Point it elsewhere and the build still succeeds while PAM and the init system find nothing — login then fails at run time. Use `dest_directory` for staged packaging, which prefixes the staging root and leaves this path alone |
+| `init_system` | `systemd` on Linux, `none` on FreeBSD | **Linux only.** Which init system to install a service file for: `systemd`, `openrc`, `runit`, `s6`, `dinit`, `sysvinit`, or `none`. FreeBSD uses `getty(8)` from `/etc/ttys` and installs no service file |
+| `name` | `sakura` | Renames **only** the installed binary and its getty wrapper. The configuration directory, both PAM policies, every init-system service file and the default `service_name` all stay `sakura` — so the enable commands below are correct whatever you set this to |
 | `enable_x11_support` | `true` | Links `libxcb` for X11 sessions. Set `false` for a Wayland- or console-only build, which then needs neither `libxcb` nor `pkgconf` |
-| `default_tty` | `2` | The virtual terminal Sakura is installed onto. Fills in the generated `gettytab.example` and `ttys.example`. Must be 1 or greater |
+| `default_tty` | `2` | The virtual terminal Sakura is installed onto. Fills in the generated `gettytab.example` and `ttys.example` on FreeBSD, and the service file on Linux. Must be 1 or greater on both. Note the device naming differs: VT 2 is `/dev/ttyv1` on FreeBSD and `/dev/tty2` on Linux |
 | `fallback_tty` | `2` | *Embedded.* The terminal to fall back to if the current one cannot be determined |
 | `uid_min` | `1000` | *Embedded.* Lowest UID shown in the user list |
-| `uid_max` | `32000` | *Embedded.* Highest UID shown in the user list |
+| `uid_max` | `32000` | *Embedded.* Highest UID shown in the user list. Authoritative on FreeBSD; on Linux it is the fallback used when `login.defs` cannot be read, where the usual default is 60000 |
 
 For example, a Wayland-only install staged into a package root:
 
@@ -292,6 +417,169 @@ To run Sakura on a different virtual terminal, build with `-Ddefault_tty=N`
 (which also adjusts the generated examples) and edit the matching `/etc/ttys`
 line instead.
 
+### Linux
+
+There is no `/etc/ttys` and no `gettytab` on Linux. Sakura is started by the
+init system, so `zig build installexe` installs a service file for whichever one
+you select with `-Dinit_system`. The default is `systemd`:
+
+```sh
+# zig build installexe -Dinit_system=systemd
+```
+
+Valid values are `systemd`, `openrc`, `runit`, `s6`, `dinit`, `sysvinit`, and
+`none` to install no service file at all. Enable it with the matching command:
+
+| `-Dinit_system` | Installed as | Enable with |
+| --- | --- | --- |
+| `systemd` | `/usr/lib/systemd/system/sakura@.service` | `systemctl enable --now sakura@tty2.service` |
+| `openrc` | `/etc/init.d/sakura` | `rc-update add sakura default` |
+| `runit` | `/etc/sv/sakura/` | `ln -s /etc/sv/sakura /var/service/` |
+| `s6` | `/etc/s6/sv/sakura-srv/` | `s6-rc-bundle-update add default sakura-srv` |
+| `dinit` | `/etc/dinit.d/sakura` | `dinitctl enable sakura` |
+| `sysvinit` | `/etc/init.d/sakura` | `update-rc.d sakura defaults` |
+
+> [!IMPORTANT]
+> Only one program may own a virtual terminal, so whatever `getty` is already
+> on yours has to go. The systemd unit declares that conflict itself
+> (`Conflicts=getty@%i.service`), so enabling it is enough. On every other init
+> system, disable the `getty` for that terminal by hand first — otherwise the
+> two fight over the terminal and the login UI flickers or never draws.
+
+Linux names virtual terminal devices in decimal with no offset, so virtual
+terminal 2 is `/dev/tty2` — not `/dev/ttyv1` as on FreeBSD. Build with
+`-Ddefault_tty=N` to use a different one.
+
+### What the service files need, and one thing they assume
+
+Every one of the six is a `/bin/sh` script or a declarative unit, so none of
+them needs a package beyond what the init system already requires. In
+particular **the s6 service is not an execline script.** It was one, which made
+`execline` an undocumented dependency at a hardcoded `/bin/execlineb`; it is
+plain `sh` now, and `s6-supervise` execs the `run` file whatever its shebang.
+
+The five non-systemd services split into two kinds, which matters because only
+the first kind involves a `getty` at all:
+
+| Service | How Sakura is started |
+| --- | --- |
+| `openrc`, `runit`, `s6` | Through a **getty**, resolved from `PATH` at start-up — `agetty` preferred, `getty` as the fallback — which hands the terminal over with `-l`. Each refuses to start with a message naming the cause if neither is present |
+| `sysvinit`, `dinit` | **Directly**, with no getty, so the note below does not apply to either. Both open `/dev/ttyN` *from inside a new session*, which is what gives Sakura the terminal as its **controlling terminal** — the SysV script calls `setsid` itself, while the dinit service relies on dinit calling `setsid()` for it. See the note below |
+
+The systemd unit is a third case again: it invokes `/sbin/agetty` by absolute
+path from `ExecStart`, since a unit file cannot resolve a program at run time.
+
+> [!NOTE]
+> **Why those two nest a second shell inside `setsid`.** Nothing in Sakura
+> calls `TIOCSCTTY`, so it never claims a controlling terminal itself; it takes
+> whichever one its session already has. `credentials(7)` gives the rule:
+> *"The controlling terminal is established when the session leader first opens
+> a terminal (unless the `O_NOCTTY` flag is specified when calling `open(2)`)."*
+>
+> Redirecting first and calling `setsid` afterwards therefore does **not**
+> work: the terminal is opened by a process that is not yet a session leader,
+> and the session `setsid` then creates has open descriptors but no controlling
+> terminal. Measured, `/dev/tty` is unopenable in that arrangement, which costs
+> the user's shell its job control — no `Ctrl-Z`, no `fg`/`bg`.
+>
+> Running `setsid` first and opening the terminal inside the new session gets
+> it assigned by the kernel on the `open` itself. `setsid --ctty` looks like
+> the simpler answer and is deliberately **not** used: when its ioctl is
+> refused — which is what happens when a getty still holds the terminal — it
+> prints a warning, **exits 0, and never runs the program at all**, so the init
+> system records a successful start with no login prompt.
+>
+> dinit needs the redirection for a second reason, and must **not** add a
+> `setsid` of its own. It has no per-service device setting:
+> `dinit-service(5)` defines a console service's device as *"the device to
+> which `dinit`'s standard output stream is connected"*, and `inittab-line`
+> only *"specifies the tty line that will be written to the \"utmp\"
+> database"*. So a console option alone would hand Sakura dinit's console
+> rather than the terminal reserved for it, and `getActiveTty()` — which asks
+> `TIOCGDEV` what device is behind stdin — would report that one.
+>
+> But the service declares **no console option at all**, which is what makes
+> the plain redirection work. `dinit`'s `src/run-child-proc.cc` branches on
+> `on_console`, set by both `starts-on-console` and `shares-console`:
+>
+> ```c
+> if (!on_console) { ... setsid(); }   // child becomes a session leader
+> else { ...; setpgid(0,0); ... }      // child becomes a group leader
+> ```
+>
+> With a console option the child leads its process group, and `setsid(1)`
+> **forks** when its caller already does — so dinit would supervise a parent
+> that exits at once and, with `restart = true`, restart it forever. With no
+> console option dinit calls `setsid()` itself and the shell opens the
+> terminal as session leader, so the pid is preserved and the terminal is
+> acquired. This is why the two services differ: the SysV script supplies its
+> own `setsid` because `start-stop-daemon` does not, and the dinit service
+> must not, because dinit does.
+
+> [!NOTE]
+> **The `getty` fallback does not fit a busybox userland, and that is now
+> established rather than suspected.** These scripts pass the positional
+> arguments in `agetty`'s order — port, then baud rate, then terminal type.
+> BusyBox documents its own applet as `getty [OPTIONS] BAUD_RATE [TTY]`, baud
+> rate **first**, and defines no `--noclear`. So on a host that ships only
+> BusyBox's `getty`, the fallback would start and then mis-parse its arguments.
+>
+> Preferring `agetty` closes this wherever both exist, which covers every
+> util-linux system, and keeps `--noclear` away from an applet that would
+> reject it. It cannot close the busybox-only case: that needs the argument
+> order chosen per implementation, which is worth doing when someone actually
+> wants Sakura on such a host. Nobody has asked yet, so it is recorded here
+> rather than built on speculation.
+
+## Platform differences
+
+These are the places where FreeBSD and Linux do not and cannot behave
+identically. They are listed rather than smoothed over, because each one is
+something a user could otherwise be surprised by.
+
+**Session setup is less complete on Linux.** FreeBSD's `setusercontext(3)` with
+`LOGIN_SETALL` applies the login class, resource limits, umask, scheduling
+priority, MAC label, CPU mask and the `LANG`/`TZ`/`TERM` environment in one
+call. Linux has no equivalent; Sakura does `initgroups(3)`, `setgid(2)` and
+`setuid(2)`, and everything else comes from the PAM session stack —
+`pam_limits`, `pam_umask`, `pam_env`. If a limit or umask is not applied on
+Linux, it is PAM that needs configuring, not Sakura.
+
+**`XDG_*` ownership.** On Linux, `pam_systemd` (or `pam_elogind`) owns
+`XDG_RUNTIME_DIR`, `XDG_SESSION_ID` and `XDG_SEAT`, and its values win.
+Sakura sets them before calling PAM so that logind can see the seat and
+terminal, then logind's real values replace them in the session. On FreeBSD
+nothing else provides them, so Sakura's own values are what the session gets.
+This is why the Linux PAM policy is a separate file and why
+`-session optional pam_systemd.so` in it is load-bearing: without it there is
+no runtime directory and no seat ownership, and Wayland compositors that use
+the libseat/logind backend will not start.
+
+**Console colours differ.** The FreeBSD console uses its own palette rather
+than the usual VGA one, so the same colour values in `config.ini` do not
+produce exactly the same shades on both platforms.
+
+**The battery option differs.** FreeBSD reads a `sysctl` MIB
+(`battery_sysctl`), Linux a power supply under `/sys/class/power_supply`
+(`battery_id`). Both keys exist on both platforms and each ignores the other's,
+so one configuration file works on both machines — but setting only the wrong
+one for your platform silently shows no battery.
+
+**The UID range comes from different places.** Linux reads `UID_MIN`/`UID_MAX`
+from `login.defs(5)`, whose path is set by `login_defs_path`. FreeBSD has no
+such file and uses the `-Duid_min`/`-Duid_max` build options directly, which
+are also the fallback on Linux when the file cannot be read. Note the usual
+Linux default `UID_MAX` is 60000 where FreeBSD's `pw(8)` uses 32000, so a
+Linux host with accounts above 32000 needs `login.defs` readable, or those
+accounts will not be listed.
+
+**`utmp` may do nothing on Linux.** Sakura writes a login record, but systemd
+has made `utmp` optional and distributions are retiring `/run/utmp`. A failure
+to write it is **ignored silently** — `src/auth.zig` discards what
+`pututxline(3)` returns and does not log it — so the login succeeds either way,
+and `who` or `last` simply will not show the session. This is the behaviour on
+both platforms, not a Linux concession.
+
 ## Updating
 
 You can install Sakura without overriding the current configuration file:
@@ -306,8 +594,40 @@ You can install Sakura without overriding the current configuration file:
 # zig build uninstallexe
 ```
 
-`uninstallnoconf` does the same but keeps `/usr/local/etc/sakura`. Neither
-touches `/etc/gettytab` or `/etc/ttys`, so remember to revert those by hand.
+`uninstallnoconf` does the same but keeps the configuration directory
+(`/usr/local/etc/sakura` on FreeBSD, `/etc/sakura` on Linux). Neither touches
+`/etc/gettytab` or `/etc/ttys`, so on FreeBSD remember to revert those by hand.
+
+> [!IMPORTANT]
+> **On Linux, stop and disable the service before uninstalling, not after.**
+> The uninstall removes the service file *and the binary*, but it does not stop
+> anything that is already running — and with systemd, deleting a unit file
+> does not unload the running unit. `res/sakura.service` sets `Restart=always`
+> with `RestartSec=0`, and `ExecStart` runs `agetty -nl <the Sakura binary>`,
+> so once the session ends systemd restarts agetty and it cannot exec a login
+> program that is no longer there. Meanwhile `Conflicts=getty@%i.service`
+> keeps the ordinary getty off that terminal. The result is a terminal with no
+> login prompt.
+>
+> Run these *first*, for each instance you enabled — `systemctl disable` can
+> fail once the unit file has been deleted:
+>
+> ```sh
+> systemctl disable --now sakura@ttyN.service
+> ```
+>
+> ```sh
+> systemctl start getty@ttyN.service
+> ```
+>
+> Replace `N` with the terminal number. On the other init systems, disable the
+> service with the counterpart of the enable command in
+> [Enabling it on Linux](#linux-1) and re-enable whatever previously owned the
+> terminal, again before uninstalling.
+>
+> The installer deliberately does not do this for you: it writes and removes
+> files, and shelling out to a service manager would break staged packaging,
+> where the build host is not the host the service runs on.
 
 ## Configuration
 
@@ -320,8 +640,19 @@ You can check the validity of your configuration file (i.e. whether there are
 any errors in it) with:
 
 ```sh
+# FreeBSD
 sakura --validate-config /usr/local/etc/sakura/config.ini
 ```
+
+```sh
+# Linux
+sakura --validate-config /etc/sakura/config.ini
+```
+
+The path differs because the configuration root does: `--config` defaults to
+`/usr/local/etc/sakura` on FreeBSD and `/etc/sakura` on Linux, and
+`--validate-config` names a file inside it. See
+[Linux layout](#linux-layout).
 
 Logs are defined by that same file:
 
@@ -336,7 +667,7 @@ Logs are defined by that same file:
 | --- | --- | --- |
 | `-h`, `--help` | — | List the options and exit |
 | `-v`, `--version` | — | Print the version and exit |
-| `-c`, `--config` | a **directory** | Read the configuration from there instead of `/usr/local/etc/sakura`. Sakura looks inside it for `config.ini`, `lang/` and the save file |
+| `-c`, `--config` | a **directory** | Read the configuration from there instead of the default — `/usr/local/etc/sakura` on FreeBSD, `/etc/sakura` on Linux. Sakura looks inside it for `config.ini`, `lang/` and the save file |
 | `--validate-config` | a **file** | Check a configuration file for errors and exit |
 
 The two path options differ deliberately: `--config` points at a directory
@@ -548,12 +879,16 @@ Renamed, with the old name still accepted:
 | `min_refresh_delta` | `animation_frame_delay` |
 | `blank_password` | `clear_password` |
 
-Dropped, because they have no FreeBSD equivalent:
+Platform-specific, and all still supported — carry them over unchanged:
 
-- `battery_id` — the Linux sysfs identifier. Use `battery_sysctl`, which takes a
-  sysctl MIB such as `hw.acpi.battery.life`, instead.
-- `login_defs_path` — `/etc/login.defs` is a Linux file. The UID range is fixed at
-  build time with `-Duid_min` and `-Duid_max`.
+- `battery_id` — the Linux power-supply identifier under
+  `/sys/class/power_supply`. Still read on Linux.
+- `battery_sysctl` — the FreeBSD equivalent, a sysctl MIB such as
+  `hw.acpi.battery.life`. Both keys exist on both platforms and each ignores
+  the other's, so one file works on both hosts.
+- `login_defs_path` — the path to `login.defs(5)`, read on Linux for the UID
+  range. FreeBSD has no such file and uses the `-Duid_min`/`-Duid_max` build
+  options, which are also the fallback on Linux when the file cannot be read.
 
 Folded into other options: `sleep_key`/`sleep_cmd` and
 `hibernate_key`/`hibernate_cmd` become custom keybinds, since FreeBSD has no
@@ -934,6 +1269,7 @@ there lists the supported keys.
 ### Sakura will not start after I edited the configuration
 
 ```sh
+# FreeBSD; on Linux the path is /etc/sakura/config.ini
 sakura --validate-config /usr/local/etc/sakura/config.ini
 ```
 

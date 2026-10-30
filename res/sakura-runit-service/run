@@ -1,0 +1,20 @@
+#!/bin/sh
+# Script function and purpose: runit run script. Resolves the getty to use,
+# then execs it so runsv supervises Sakura itself rather than this shell.
+
+[ -r conf ] && . ./conf
+
+# Action purpose: getty on busybox systems, agetty on util-linux ones. Resolved
+# from PATH so the name that is found is the name that runs, and an absent pair
+# is reported here rather than becoming an empty argument to setsid. agetty is
+# preferred because these scripts pass arguments in agetty's positional order;
+# see res/sakura-s6/run for the full note.
+GETTY=$(command -v agetty || command -v getty || true)
+if [ -z "$GETTY" ]; then
+	echo "sakura: neither getty nor agetty was found on PATH" >&2
+	exit 1
+fi
+
+# setsid: Sakura must be a session leader to own the terminal and to switch
+# virtual terminals.
+exec setsid ${GETTY} ${GETTY_ARGS} -nl $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME "${TTY}" "${BAUD_RATE}" "${TERM_NAME}"

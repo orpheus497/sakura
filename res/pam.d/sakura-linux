@@ -1,0 +1,72 @@
+#%PAM-1.0
+
+# Linux-PAM policy. Kept separate from the FreeBSD one because it depends on
+# the leading "-" prefix, which OpenPAM did not accept before FreeBSD 15.0 and
+# which is fatal to the whole policy on 14.3 and earlier.
+#
+# Note the prefix means something narrower here than the FreeBSD comment might
+# suggest: on Linux-PAM "-" only suppresses the syslog entry for a module that
+# is not installed. It is "optional" that makes the module non-fatal. Both are
+# used together below, so a distribution missing any of these modules still
+# logs in cleanly and silently.
+#
+# `include login` pulls in the distribution's own stack, which is where
+# pam_securetty, pam_nologin, pam_unix, pam_limits, pam_env, pam_umask,
+# pam_loginuid and pam_selinux come from. Most of what FreeBSD's
+# setusercontext(3) does under LOGIN_SETALL arrives through the session line
+# below rather than from Sakura itself.
+
+auth       include      login
+# Capture the password while it is still in the auth stack, so the keyring or
+# wallet can be unlocked with it.
+-auth      optional     pam_gnome_keyring.so
+-auth      optional     pam_kwallet5.so
+
+account    include      login
+
+password   include      login
+-password  optional     pam_gnome_keyring.so use_authtok
+
+# The single most important Linux-only line: pam_systemd registers the logind
+# session and exports XDG_SESSION_ID, XDG_RUNTIME_DIR, XDG_SEAT and XDG_VTNR.
+# Without it there is no runtime directory, no seat ownership and no DRM-master
+# handover, so Wayland compositors using the libseat-logind backend cannot
+# start. pam_elogind.so is the same thing on elogind distributions; exactly one
+# of the two is ever installed, which is what the "-" prefix is for.
+#
+# Action purpose: both run AFTER `include login`, not before. pam_systemd(8)
+# says of XDG_SESSION_ID that "If auditing is available and pam_loginuid.so was
+# run before this module (which is highly recommended), the variable is
+# initialized from the auditing session id (/proc/self/sessionid). Otherwise, an
+# independent session counter is used." pam_loginuid is in the included login
+# stack named above, so registering the session before it would silently fall
+# back to the private counter and cost the audit correlation. The example stack
+# in pam_systemd(8) orders the two the same way. They still precede the keyring
+# lines below, which need XDG_RUNTIME_DIR to already exist.
+#
+# This line duplicates pam_systemd on distributions whose own login stack
+# already calls it, and moving it below `include login` does not change that.
+# pam_systemd(8) documents nothing about repeated invocation, so whether it is
+# harmless is simply unknown -- and nothing here bounds it. `optional` only
+# tells PAM to ignore the module's return status, and the "-" prefix only
+# suppresses the log line when the module is absent; neither limits what a
+# second invocation may do as a side effect.
+#
+# The line stays regardless, because removing it would leave elogind
+# distributions -- and any whose login stack omits pam_systemd -- with no
+# logind session at all, which is the failure this policy exists to prevent.
+# Should duplication ever prove harmful, the fix is to detect the duplicate,
+# not to drop the fallback.
+#
+# No `class=` is given. pam_systemd(8) states that with neither the module
+# option nor XDG_SESSION_CLASS set, "the class is automatically chosen,
+# depending on various session parameters, such as the session type (if known),
+# whether the session has a TTY or X11 display, and the user disposition" --
+# and documents `user` as "the default class for sessions for which a TTY or X
+# display is known at session registration time". Sakura registers on a TTY, so
+# that is the case this falls into; it is not an unconditional default.
+session    include      login
+-session   optional     pam_systemd.so
+-session   optional     pam_elogind.so
+-session   optional     pam_gnome_keyring.so auto_start
+-session   optional     pam_kwallet5.so      auto_start

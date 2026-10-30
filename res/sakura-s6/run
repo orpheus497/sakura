@@ -1,0 +1,31 @@
+#!/bin/sh
+# Script function and purpose: s6 service for Sakura. s6-supervise execs this
+# file, so the shebang alone decides the interpreter; /bin/sh is used rather
+# than execline so the service needs no package beyond a shell, and so this
+# file can be checked with `sh -n` like the other five init scripts.
+
+# Action purpose: getty on busybox systems, agetty on util-linux ones. Resolved
+# from PATH rather than named outright: the previous version invoked a bare
+# `agetty`, which does not exist on a busybox userland, and s6 is commonly
+# paired with one. An absent pair is reported here instead of failing as a
+# command-not-found the supervisor would merely restart in a loop.
+GETTY=$(command -v agetty || command -v getty || true)
+if [ -z "$GETTY" ]; then
+	echo "sakura: neither agetty nor getty was found on PATH" >&2
+	exit 1
+fi
+
+BAUD_RATE=38400
+TERM_NAME=linux
+TTY=tty$DEFAULT_TTY
+
+# -n skips the login-name prompt; -l replaces login(1) with Sakura, which does
+# its own authentication. exec so s6-supervise supervises Sakura itself rather
+# than this shell.
+#
+# No setsid here, unlike the runit and sysvinit scripts: `exec setsid` forks
+# when the caller is already a process group leader, which would leave
+# s6-supervise tracking a pid that has exited. Whether s6-supervise makes its
+# child a group leader is not documented in anything available here, so the
+# call is omitted rather than added on an assumption.
+exec "$GETTY" -nl "$PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME" "$TTY" "$BAUD_RATE" "$TERM_NAME"

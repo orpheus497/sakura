@@ -1,0 +1,32 @@
+#%PAM-1.0
+
+# Linux-PAM policy for automatic login. Identical to sakura-linux except for
+# the auth stack. Kept separate from the FreeBSD policy for the same reason:
+# it depends on the leading "-" prefix, which is fatal to the whole policy on
+# FreeBSD 14.3 and earlier.
+
+# pam_permit.so replaces the distribution's entire auth stack rather than
+# adding to it, so everything that stack would have enforced is bypassed --
+# including pam_securetty (which restricts root to terminals listed in
+# /etc/securetty) and pam_nologin (which blocks logins while /etc/nologin
+# exists). That is the point of automatic login, but it is worth stating
+# plainly: this policy authenticates nobody.
+auth       required     pam_permit.so
+-auth      optional     pam_gnome_keyring.so
+-auth      optional     pam_kwallet5.so
+
+account    include      login
+
+password   include      login
+-password  optional     pam_gnome_keyring.so use_authtok
+
+# See sakura-linux for why pam_systemd is load-bearing here, why no class= is
+# given, and why both lines must follow `include login` rather than precede it
+# (pam_loginuid is in that stack and pam_systemd(8) wants it to have run first).
+# It also notes that this line duplicates pam_systemd where the login stack
+# already calls it, which the reordering does not change.
+session    include      login
+-session   optional     pam_systemd.so
+-session   optional     pam_elogind.so
+-session   optional     pam_gnome_keyring.so auto_start
+-session   optional     pam_kwallet5.so      auto_start

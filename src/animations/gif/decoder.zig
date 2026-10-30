@@ -158,7 +158,7 @@ fn parse(allocator: Allocator, bytes: []u8) !Gif {
                     if (pos >= bytes.len or bytes[pos] != 4) return Error.TruncatedGif;
                     if (pos + 5 > bytes.len) return Error.TruncatedGif;
                     const gce = bytes[pos + 1 ..];
-                    pending_disposal = @enumFromInt((gce[0] >> 2) & 0x07);
+                    pending_disposal = @fromBackingInt(@intCast((gce[0] >> 2) & 0x07));
                     pending_transparent = if (gce[0] & 0x01 != 0) gce[3] else null;
                     // GIF stores the delay in hundredths of a second. A zero or
                     // one-tick delay means "as fast as possible", which every
