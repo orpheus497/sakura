@@ -214,19 +214,34 @@ is given separately. Zig 0.17.0 is needed on every one of them.
 Where a distribution's package is older, fetch the upstream release — but
 **not** with the command in the FreeBSD section above, which downloads
 `zig-x86_64-freebsd-0.17.0.tar.xz` and would leave you with a FreeBSD
-executable. Take the Linux archive for your architecture instead:
+executable. Take the Linux archive for your architecture instead, and verify it
+*before* extracting it:
 
 ```sh
-# x86_64; substitute aarch64 as needed
 curl -LO https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
-tar xf zig-x86_64-linux-0.17.0.tar.xz
-export PATH="$PWD/zig-x86_64-linux-0.17.0:$PATH"
-zig version   # must print 0.17.0
+echo "1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026  zig-x86_64-linux-0.17.0.tar.xz" \
+  | sha256sum -c - \
+  && tar xf zig-x86_64-linux-0.17.0.tar.xz \
+  && export PATH="$PWD/zig-x86_64-linux-0.17.0:$PATH" \
+  && zig version   # must print 0.17.0
 ```
 
-Checksums for every archive are published in
-<https://ziglang.org/download/index.json>; CI verifies the one it fetches
-before unpacking it, and so should you.
+The `&&` chain is the point rather than a flourish: `sha256sum -c` exits
+non-zero and prints `FAILED` on a mismatch, so a bad download is never
+unpacked and no unverified binary is ever run. Pasting the block whole is
+therefore safe in a way that running the commands one by one is not.
+
+For aarch64, substitute both the file name and the digest:
+
+| Archive | sha256 |
+| --- | --- |
+| `zig-x86_64-linux-0.17.0.tar.xz` | `1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026` |
+| `zig-aarch64-linux-0.17.0.tar.xz` | `9e8d11661d4ae3bd57702a3832781e23ad151dde5798e16a5ccd503f65234ff8` |
+
+Both digests come from <https://ziglang.org/download/index.json>, which
+publishes one for every archive. CI does the same check on the FreeBSD tarball
+it fetches: `.github/workflows/ci.yml` compares against `ZIG_FREEBSD_SHA256`
+and exits before unpacking on a mismatch.
 
 | Need | Arch | Fedora | Debian/Ubuntu |
 | --- | --- | --- | --- |
