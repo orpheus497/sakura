@@ -464,10 +464,38 @@ the first kind involves a `getty` at all:
 | Service | How Sakura is started |
 | --- | --- |
 | `openrc`, `runit`, `s6` | Through a **getty**, resolved from `PATH` at start-up — `agetty` preferred, `getty` as the fallback — which hands the terminal over with `-l`. Each refuses to start with a message naming the cause if neither is present |
-| `sysvinit`, `dinit` | **Directly.** The SysV script `exec setsid`s the binary with stdin and stdout on the terminal; the dinit description names it as `command`. No getty is resolved, so the note below does not apply to either |
+| `sysvinit`, `dinit` | **Directly**, with no getty, so the note below does not apply to either. Both run `setsid` and then open `/dev/ttyN` *from inside the new session*, which is what gives Sakura the terminal as its **controlling terminal** — see the note on that below |
 
 The systemd unit is a third case again: it invokes `/sbin/agetty` by absolute
 path from `ExecStart`, since a unit file cannot resolve a program at run time.
+
+> [!NOTE]
+> **Why those two nest a second shell inside `setsid`.** Nothing in Sakura
+> calls `TIOCSCTTY`, so it never claims a controlling terminal itself; it takes
+> whichever one its session already has. `credentials(7)` gives the rule:
+> *"The controlling terminal is established when the session leader first opens
+> a terminal (unless the `O_NOCTTY` flag is specified when calling `open(2)`)."*
+>
+> Redirecting first and calling `setsid` afterwards therefore does **not**
+> work: the terminal is opened by a process that is not yet a session leader,
+> and the session `setsid` then creates has open descriptors but no controlling
+> terminal. Measured, `/dev/tty` is unopenable in that arrangement, which costs
+> the user's shell its job control — no `Ctrl-Z`, no `fg`/`bg`.
+>
+> Running `setsid` first and opening the terminal inside the new session gets
+> it assigned by the kernel on the `open` itself. `setsid --ctty` looks like
+> the simpler answer and is deliberately **not** used: when its ioctl is
+> refused — which is what happens when a getty still holds the terminal — it
+> prints a warning, **exits 0, and never runs the program at all**, so the init
+> system records a successful start with no login prompt.
+>
+> dinit needs this for a second reason. It has no per-service device setting:
+> `dinit-service(5)` defines a console service's device as *"the device to
+> which `dinit`'s standard output stream is connected"*, and `inittab-line`
+> only *"specifies the tty line that will be written to the \"utmp\"
+> database"*. So `shares-console` alone would hand Sakura dinit's console
+> rather than the terminal reserved for it, and `getActiveTty()` — which asks
+> `TIOCGDEV` what device is behind stdin — would report that one.
 
 > [!NOTE]
 > **The `getty` fallback does not fit a busybox userland, and that is now

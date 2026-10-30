@@ -44,10 +44,26 @@ case "$1" in
         exit 1
     fi
 
-    # setsid: Sakura must be a session leader to own the terminal and to switch
-    # virtual terminals. stdin/stdout are redirected to the terminal it owns.
+    # Action purpose: setsid runs *before* the redirections, and the nesting is
+    # what makes that happen. credentials(7) gives the rule -- "The controlling
+    # terminal is established when the session leader first opens a terminal
+    # (unless the O_NOCTTY flag is specified when calling open(2))". In the
+    # single-level form the redirections were performed by this script's shell,
+    # which is not a session leader, and setsid created the session only
+    # afterwards: the new leader inherited open descriptors but no controlling
+    # terminal. Measured, /dev/tty was then unopenable, which costs the user's
+    # shell its job control, because nothing in Sakura calls TIOCSCTTY itself.
+    # Here the inner shell *is* the session leader when it opens $TTY, so the
+    # kernel assigns the terminal on the open -- confirmed under strace: ctty
+    # acquired, zero TIOCSCTTY calls.
+    #
+    # Deliberately not `setsid --ctty`, which looks equivalent and fails worse:
+    # when its ioctl is refused -- as it is when a getty still holds the VT --
+    # it warns, exits 0, and never runs the program at all, reporting a
+    # successful start with no login prompt. That is the same silent failure
+    # the pidfile liveness check above exists to prevent.
     start-stop-daemon --start --background --make-pidfile --pidfile "$PIDFILE" \
-        --startas /bin/sh -- -c "exec setsid $DAEMON <$TTY >$TTY 2>&1"
+        --startas /bin/sh -- -c "exec setsid /bin/sh -c 'exec $DAEMON <$TTY >$TTY 2>&1'"
     log_end_msg $?
     ;;
 

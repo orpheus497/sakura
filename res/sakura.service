@@ -1,5 +1,7 @@
+# Script function and purpose: systemd template unit that runs Sakura on the
+# virtual terminal named by the instance, handing the terminal over with
+# agetty. One instance per terminal, e.g. sakura@tty2.service.
 [Unit]
-# Sakura systemd unit.
 #
 # Written from the directives documented in systemd.unit(5), systemd.service(5)
 # and systemd.exec(5). It is deliberately not derived from systemd's own
