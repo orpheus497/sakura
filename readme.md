@@ -517,19 +517,56 @@ path from `ExecStart`, since a unit file cannot resolve a program at run time.
 > must not, because dinit does.
 
 > [!NOTE]
-> **The `getty` fallback does not fit a busybox userland, and that is now
-> established rather than suspected.** These scripts pass the positional
-> arguments in `agetty`'s order — port, then baud rate, then terminal type.
-> BusyBox documents its own applet as `getty [OPTIONS] BAUD_RATE [TTY]`, baud
-> rate **first**, and defines no `--noclear`. So on a host that ships only
-> BusyBox's `getty`, the fallback would start and then mis-parse its arguments.
+> **The `getty` fallback now fits a busybox userland, and the argument order is
+> why.** These scripts pass the baud rate **before** the terminal. That is not
+> `agetty`'s first documented form, and it is deliberate: it is the one order
+> both programs accept.
 >
-> Preferring `agetty` closes this wherever both exist, which covers every
-> util-linux system, and keeps `--noclear` away from an applet that would
-> reject it. It cannot close the busybox-only case: that needs the argument
-> order chosen per implementation, which is worth doing when someone actually
-> wants Sakura on such a host. Nobody has asked yet, so it is recorded here
-> rather than built on speculation.
+> BusyBox's applet documents a single form in its own usage block
+> (`loginutils/getty.c`):
+>
+> ```
+> getty [OPTIONS] BAUD_RATE[,BAUD_RATE]... TTY [TERMTYPE]
+> ```
+>
+> so baud must come first or the terminal name is read as a baud rate.
+> `agetty` documents **two** forms and accepts either:
+>
+> ```
+> agetty [options] <line> [<baud_rate>,...] [<termtype>]
+> agetty [options] <baud_rate>,... <line> [<termtype>]
+> ```
+>
+> Both were checked under `strace`: each order made `agetty` open the terminal,
+> not the baud rate. One order therefore serves both programs, and the scripts
+> need not detect which one they resolved.
+>
+> This also removes a reason to prefer `agetty` that used to be given here.
+> `agetty` is still preferred, but only because `--noclear` is agetty-only and
+> the runit `conf` guards it on `agetty` being present — not because of
+> positional order.
+>
+> The handover option itself is present on both: BusyBox's usage block defines
+> `-l LOGIN  Invoke LOGIN instead of /bin/login`, and its option string is
+> `"I:LH:f:hil:mt:+wn"`, so `-l` takes an argument there as it does under
+> `agetty`.
+>
+> **One divergence remains, and it is cosmetic rather than fatal.** BusyBox
+> execs the login program as `LOGIN -- [username]` unconditionally
+> (`BB_EXECLP(G.login, G.login, "--", logname, (char *)0)`), and with `-n` the
+> username is `NULL`, so Sakura is started with a lone `--` as its only
+> argument. `agetty` appends nothing. Sakura's option parser rejects the
+> unknown argument, prints `Invalid argument '--'`, and then **continues with
+> its compiled-in defaults** rather than exiting — the parse failure is caught
+> at `src/main.zig:177`. So a busybox host gets a working login screen with one
+> spurious line on stderr. Making Sakura ignore a bare `--`, which is the POSIX
+> end-of-options delimiter and carries no meaning for a program with no
+> positional parameters, would remove it.
+>
+> Still untested on real hardware: no busybox host has run this. The argument
+> orders and the `-l` support are read from each program's own usage definition
+> and checked against `agetty` under `strace`; what is unverified is the whole
+> path on an actual Alpine or other busybox system.
 
 ## Platform differences
 

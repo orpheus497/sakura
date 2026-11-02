@@ -17,12 +17,9 @@ pidfile=/run/"${RC_SVCNAME}.pid"
 # with neither was handed an empty command. Both fail at start-up with nothing
 # naming the cause, so start_pre below rejects the second case explicitly.
 #
-# agetty is preferred over getty, not merely first: these scripts pass the
-# positional arguments in agetty's order (port, then baud, then term type).
-# A `getty` that is not a symlink to agetty -- busybox's, notably -- documents
-# a different positional order, so where both names exist the one whose
-# argument order matches is the one to run. On a busybox-only host getty is all
-# there is; see the s6 script's note and the readme on that limitation.
+# agetty is preferred over getty because --noclear is agetty-only and the runit
+# conf guards it on agetty being present. It is NOT about argument order: the
+# order used below is accepted by both programs. See res/sakura-s6/run.
 GETTY=$(command -v agetty || command -v getty || true)
 
 TTY="tty$DEFAULT_TTY"
@@ -31,8 +28,10 @@ BAUD=38400
 
 command="${GETTY}"
 # -n skips the login-name prompt; -l replaces login(1) with Sakura, which does
-# its own authentication.
-command_args_foreground="-nl $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME ${TTY} ${BAUD} ${TERM_NAME}"
+# its own authentication. Baud rate precedes the terminal because that is the
+# only order busybox's getty accepts and one of two that agetty accepts; see
+# res/sakura-s6/run for the sources and the strace check.
+command_args_foreground="-nl $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME ${BAUD} ${TTY} ${TERM_NAME}"
 
 start_pre() {
 	if [ -z "${GETTY}" ]; then
