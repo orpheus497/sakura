@@ -657,10 +657,31 @@ You can install Sakura without overriding the current configuration file:
 > systemctl start getty@ttyN.service
 > ```
 >
-> Replace `N` with the terminal number. On the other init systems, disable the
-> service with the counterpart of the enable command in
-> [Enabling it on Linux](#linux-1) and re-enable whatever previously owned the
-> terminal, again before uninstalling.
+> Replace `N` with the terminal number. `--now` is what stops the running
+> instance; `systemctl disable` on its own only removes it from boot.
+>
+> **That distinction is the whole point, and the other five need it spelled
+> out:** stopping a service and disabling it are different operations, and so
+> are enabling a getty for boot and starting it for *this* boot. Doing only the
+> disable leaves Sakura holding the terminal while its binary is deleted
+> underneath it; doing only the re-enable leaves the terminal without a prompt
+> until the machine reboots. So both halves, in this order:
+>
+> | Init system | Stop it now | Then remove from boot |
+> | --- | --- | --- |
+> | `openrc` | `rc-service sakura stop` | `rc-update del sakura default` |
+> | `runit` | `sv down sakura` | `rm /var/service/sakura` |
+> | `s6` | `s6-rc -d change sakura-srv` | reverse the `s6-rc-bundle-update` from [Enabling it on Linux](#linux-1) |
+> | `dinit` | `dinitctl stop sakura` | `dinitctl disable sakura` |
+> | `sysvinit` | `/etc/init.d/sakura stop` | `update-rc.d -f sakura remove` |
+>
+> Then start whatever previously owned that terminal, for the current boot and
+> not just the next one. The service name for it is distribution-specific —
+> OpenRC and Void both ship per-terminal getty services but do not name them
+> alike — so start the one you disabled when you enabled Sakura, using that
+> init system's start verb rather than only its enable verb. On sysvinit the
+> previous owner is usually an `/etc/inittab` line, which `init q` re-reads
+> without a reboot.
 >
 > The installer deliberately does not do this for you: it writes and removes
 > files, and shelling out to a service manager would break staged packaging,
@@ -1306,8 +1327,13 @@ there lists the supported keys.
 ### Sakura will not start after I edited the configuration
 
 ```sh
-# FreeBSD; on Linux the path is /etc/sakura/config.ini
+# FreeBSD
 sakura --validate-config /usr/local/etc/sakura/config.ini
+```
+
+```sh
+# Linux
+sakura --validate-config /etc/sakura/config.ini
 ```
 
 If the binary was renamed at build time with `-Dname`, run it under that name
