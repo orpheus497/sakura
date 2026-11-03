@@ -479,12 +479,12 @@ dependency at a hardcoded `/bin/execlineb`; it is plain `sh` now, and
 `s6-supervise` execs the `run` file whatever its shebang.
 
 That is not the same as needing nothing, and an earlier version of this section
-claimed it was. Two of them do reach for programs their init system does not
-itself supply:
+claimed it was. Three of the four do reach for programs their init system does
+not itself supply; only the dinit service needs nothing but a shell:
 
 | Service | Also needs | Where it comes from |
 | --- | --- | --- |
-| `sysvinit` | `/lib/lsb/init-functions`, `start-stop-daemon`, and `update-rc.d` for the documented enable command | Debian-family packaging (`lsb-base`, `dpkg`), **not** SysVinit. On a SysVinit distribution without them the script fails at its `.` line before Sakura is reached |
+| `sysvinit` | `/lib/lsb/init-functions`, `start-stop-daemon`, and `update-rc.d` for the documented enable command | Three separate Debian-family packages, **not** SysVinit: `lsb-base` ships the init functions, `dpkg` ships `start-stop-daemon`, and `init-system-helpers` ships `update-rc.d`. On a SysVinit distribution without them the script fails at its `.` line before Sakura is reached |
 | `openrc`, `runit`, `s6` | `agetty` or BusyBox `getty` on `PATH` | util-linux or BusyBox. Each script checks and exits with a message naming the cause, so this one fails loudly rather than silently |
 | `systemd` | `/sbin/agetty` at that absolute path | util-linux. A unit cannot resolve a program at run time, so the path is fixed in `ExecStart` |
 | `dinit` | nothing beyond a shell | — |
