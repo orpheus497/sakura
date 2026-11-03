@@ -307,7 +307,7 @@ This installs, **on FreeBSD** — the Linux layout differs and is below:
 | `/usr/local/etc/pam.d/sakura` | the PAM policy used for normal logins |
 | `/usr/local/etc/pam.d/sakura-autologin` | the PAM policy used for autologin |
 
-#### Linux layout
+### Linux layout
 
 Two of those columns change and three rows disappear. The prefix is `/usr` and
 the configuration root `/etc`, so the binary lands at `/usr/bin/sakura`, the
@@ -319,7 +319,7 @@ nothing on Linux consumes them:
 
 | Not installed on Linux | Why |
 | --- | --- |
-| `sakura_wrapper` | It exists to swallow the `login -fp root` arguments FreeBSD's `getty(8)` appends. Linux hands the terminal over with `agetty -l`, which appends nothing |
+| `sakura_wrapper` | It exists to swallow the `login -fp root` arguments FreeBSD's `getty(8)` appends, and no Linux getty appends anything like them. `agetty -l` appends nothing at all; BusyBox's `getty -l` appends a bare `--`, which Sakura reports and then ignores — see [the BusyBox note](#what-the-service-files-need-and-one-thing-they-assume). Neither needs a wrapper |
 | `gettytab.example` | `/etc/gettytab` is a FreeBSD file |
 | `ttys.example` | `/etc/ttys` is a FreeBSD file |
 
@@ -329,11 +329,28 @@ the command to enable it.
 
 The defaults follow the FreeBSD ports layout (`--prefix` is `/usr/local` and
 the configuration lives under `/usr/local/etc`), with the Linux defaults as
-above. Both can be overridden:
+above. Both can be overridden — but the two platforms take **different**
+values, so these examples are not interchangeable:
 
 ```sh
+# FreeBSD
 # zig build installexe -Dprefix_directory=/usr/local -Dconfig_directory=/usr/local/etc
 ```
+
+```sh
+# Linux
+# zig build installexe -Dprefix_directory=/usr -Dconfig_directory=/etc
+```
+
+> [!WARNING]
+> **Do not copy the FreeBSD line on Linux.** `-Dconfig_directory` decides where
+> the PAM policies and the openrc, sysvinit, dinit and runit service files are
+> installed, and on Linux both are searched at fixed locations: Linux-PAM reads
+> policies only from the directory libpam was built with, normally
+> `/etc/pam.d`. Setting `/usr/local/etc` there builds and installs without
+> complaint and then **fails at login**, because PAM and the init system look
+> somewhere the files are not. See the `config_directory` row under
+> [Build options](#build-options).
 
 ### Build options
 
@@ -428,11 +445,14 @@ you select with `-Dinit_system`. The default is `systemd`:
 ```
 
 Valid values are `systemd`, `openrc`, `runit`, `s6`, `dinit`, `sysvinit`, and
-`none` to install no service file at all. Enable it with the matching command:
+`none` to install no service file at all. Enable it with the matching command,
+where **`N` is the terminal the build selected** with `-Ddefault_tty` (2 unless
+you changed it) — the installer prints the exact instance name when it runs, so
+take it from there rather than assuming:
 
 | `-Dinit_system` | Installed as | Enable with |
 | --- | --- | --- |
-| `systemd` | `/usr/lib/systemd/system/sakura@.service` | `systemctl enable --now sakura@tty2.service` |
+| `systemd` | `/usr/lib/systemd/system/sakura@.service` | `systemctl enable --now sakura@ttyN.service` |
 | `openrc` | `/etc/init.d/sakura` | `rc-update add sakura default` |
 | `runit` | `/etc/sv/sakura/` | `ln -s /etc/sv/sakura /var/service/` |
 | `s6` | `/etc/s6/sv/sakura-srv/` | `s6-rc-bundle-update add default sakura-srv` |
@@ -453,10 +473,27 @@ terminal 2 is `/dev/tty2` — not `/dev/ttyv1` as on FreeBSD. Build with
 ### What the service files need, and one thing they assume
 
 Every one of the six is a `/bin/sh` script or a declarative unit, so none of
-them needs a package beyond what the init system already requires. In
-particular **the s6 service is not an execline script.** It was one, which made
-`execline` an undocumented dependency at a hardcoded `/bin/execlineb`; it is
-plain `sh` now, and `s6-supervise` execs the `run` file whatever its shebang.
+them needs an interpreter beyond a shell. In particular **the s6 service is not
+an execline script.** It was one, which made `execline` an undocumented
+dependency at a hardcoded `/bin/execlineb`; it is plain `sh` now, and
+`s6-supervise` execs the `run` file whatever its shebang.
+
+That is not the same as needing nothing, and an earlier version of this section
+claimed it was. Two of them do reach for programs their init system does not
+itself supply:
+
+| Service | Also needs | Where it comes from |
+| --- | --- | --- |
+| `sysvinit` | `/lib/lsb/init-functions`, `start-stop-daemon`, and `update-rc.d` for the documented enable command | Debian-family packaging (`lsb-base`, `dpkg`), **not** SysVinit. On a SysVinit distribution without them the script fails at its `.` line before Sakura is reached |
+| `openrc`, `runit`, `s6` | `agetty` or BusyBox `getty` on `PATH` | util-linux or BusyBox. Each script checks and exits with a message naming the cause, so this one fails loudly rather than silently |
+| `systemd` | `/sbin/agetty` at that absolute path | util-linux. A unit cannot resolve a program at run time, so the path is fixed in `ExecStart` |
+| `dinit` | nothing beyond a shell | — |
+
+The SysVinit row is the one to watch: it is the only service whose missing
+dependency is both silent and outside the init system's own tooling. It was
+written against Debian-family SysVinit, which is where `start-stop-daemon` and
+the LSB init functions live. Porting it elsewhere means replacing both, and a
+report of that is welcome.
 
 The five non-systemd services split into two kinds, which matters because only
 the first kind involves a `getty` at all:
@@ -587,10 +624,13 @@ Linux, it is PAM that needs configuring, not Sakura.
 Sakura sets them before calling PAM so that logind can see the seat and
 terminal, then logind's real values replace them in the session. On FreeBSD
 nothing else provides them, so Sakura's own values are what the session gets.
-This is why the Linux PAM policy is a separate file and why
-`-session optional pam_systemd.so` in it is load-bearing: without it there is
-no runtime directory and no seat ownership, and Wayland compositors that use
-the libseat/logind backend will not start.
+This is why the Linux PAM policy is a separate file and why the
+`-session optional pam_systemd.so` line in it is load-bearing: without it there
+is no runtime directory and no seat ownership, and Wayland compositors that use
+the libseat/logind backend will not start. The policy names
+`pam_elogind.so` on the next line for the same reason — it is the equivalent
+module on elogind distributions, and whichever of the two is absent is skipped
+rather than fatal, which is what the `-` prefix buys.
 
 **Console colours differ.** The FreeBSD console uses its own palette rather
 than the usual VGA one, so the same colour values in `config.ini` do not
@@ -689,10 +729,28 @@ You can install Sakura without overriding the current configuration file:
 
 ## Configuration
 
-All configuration lives in `/usr/local/etc/sakura/config.ini`. The file is fully
-commented and shows the value of every option, which is the built-in default
-except where a comment says otherwise. A pristine copy is kept next to it as
-`config.ini.example`.
+> [!IMPORTANT]
+> **Every path in this section is the FreeBSD default.** On Linux the two
+> roots differ, and the substitution is mechanical:
+>
+> | FreeBSD | Linux |
+> | --- | --- |
+> | `/usr/local/etc/…` | `/etc/…` |
+> | `/usr/local/share/…` | `/usr/share/…` |
+>
+> So `/usr/local/etc/sakura/config.ini` is `/etc/sakura/config.ini`,
+> `/usr/local/etc/sakura/lang/` is `/etc/sakura/lang/`, and
+> `/usr/local/share/xsessions` is `/usr/share/xsessions`. The rule is stated
+> once here rather than repeated at every path below, because one rule a reader
+> can apply everywhere is harder to get wrong than several dozen parenthetical
+> exceptions — and because the roots are exactly what `-Dprefix_directory` and
+> `-Dconfig_directory` set, so a non-default build shifts them all together.
+
+Configuration lives in `config.ini` under the configuration root —
+`/usr/local/etc/sakura/config.ini` on FreeBSD, `/etc/sakura/config.ini` on
+Linux. The file is fully commented and shows the value of every option, which
+is the built-in default except where a comment says otherwise. A pristine copy
+is kept next to it as `config.ini.example`.
 
 You can check the validity of your configuration file (i.e. whether there are
 any errors in it) with:

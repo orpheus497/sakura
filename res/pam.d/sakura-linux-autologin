@@ -1,4 +1,7 @@
 #%PAM-1.0
+# Script function and purpose: Linux-PAM policy for Sakura's automatic login.
+# It permits authentication without a password, then includes the login stack
+# and adds logind session registration and keyring startup.
 
 # Linux-PAM policy for automatic login. Identical to sakura-linux except for
 # the auth stack. Kept separate from the FreeBSD policy for the same reason:

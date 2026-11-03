@@ -1,4 +1,7 @@
 #%PAM-1.0
+# Script function and purpose: Linux-PAM policy for Sakura's normal login. It
+# includes the distribution's login stack and adds logind session
+# registration and keyring unlock on top of it.
 
 # Linux-PAM policy. Kept separate from the FreeBSD one because it depends on
 # the leading "-" prefix, which OpenPAM did not accept before FreeBSD 15.0 and
