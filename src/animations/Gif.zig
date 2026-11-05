@@ -751,7 +751,7 @@ test "the colour cube round-trips" {
 }
 
 test "every quadrant arrangement is covered exactly once" {
-    var seen = [_]bool{false} ** 16;
+    var seen: [16]bool = @splat(false);
     for (quadrants) |q| {
         try std.testing.expect(!seen[q.mask]);
         seen[q.mask] = true;

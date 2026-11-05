@@ -40,19 +40,19 @@ pub const Input = enum {
     /// Moves the current Input forwards by one entry. If `reverse`, then the Input
     /// moves backwards. If `wrap` is true, then the entry will wrap back around
     pub fn move(self: *Input, reverse: bool, wrap: bool) void {
-        const maxNum = @typeInfo(Input).@"enum".fields.len - 1;
-        const selfNum = @intFromEnum(self.*);
+        const maxNum = @typeInfo(Input).@"enum".field_names.len - 1;
+        const selfNum = @backingInt(self.*);
         if (reverse) {
             if (wrap) {
-                self.* = @enumFromInt(selfNum -% 1);
+                self.* = @fromBackingInt(@intCast(selfNum -% 1));
             } else if (selfNum != 0) {
-                self.* = @enumFromInt(selfNum - 1);
+                self.* = @fromBackingInt(@intCast(selfNum - 1));
             }
         } else {
             if (wrap) {
-                self.* = @enumFromInt(selfNum +% 1);
+                self.* = @fromBackingInt(@intCast(selfNum +% 1));
             } else if (selfNum != maxNum) {
-                self.* = @enumFromInt(selfNum + 1);
+                self.* = @fromBackingInt(@intCast(selfNum + 1));
             }
         }
     }

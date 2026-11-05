@@ -1,0 +1,17 @@
+# Script function and purpose: shared settings for the runit service,
+# sourced by both run and finish. Holds nothing executable on purpose, so
+# that sourcing it twice is harmless.
+
+BAUD_RATE=38400
+TERM_NAME=linux
+TTY=tty$DEFAULT_TTY
+
+# Action purpose: TTY is assigned above and read here, in that order. Reversed,
+# the test compared an unset variable, so --noclear was never applied and tty1
+# boot output was always cleared.
+if command -v agetty >/dev/null 2>&1; then
+	# util-linux only: tty1 usually carries boot output worth keeping.
+	if [ "${TTY}" = "tty1" ]; then
+		GETTY_ARGS="--noclear"
+	fi
+fi

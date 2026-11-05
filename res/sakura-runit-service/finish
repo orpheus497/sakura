@@ -1,0 +1,8 @@
+#!/bin/sh
+# Script function and purpose: runit finish script, run when the service
+# stops. Clears the utmp entry so the terminal is not left showing a
+# logged-in user that is no longer there.
+
+[ -r conf ] && . ./conf
+
+exec utmpset -w "${TTY}"

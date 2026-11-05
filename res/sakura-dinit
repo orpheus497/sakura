@@ -1,0 +1,60 @@
+# Script function and purpose: dinit service description. Declarative, and
+# like the SysV script it launches Sakura directly rather than through a
+# getty, so it resolves no terminal-handover program.
+type            = process
+restart         = true
+smooth-recovery = true
+# Action purpose: bind Sakura to the terminal the installer reserved, and let
+# dinit's own setsid() make the shell a session leader, so that opening that
+# terminal establishes it as Sakura's controlling terminal.
+#
+# The device has to be bound here because dinit has no per-service device
+# setting: dinit-service(5) defines a console service's device as "the device
+# to which dinit's standard output stream is connected", and inittab-line only
+# "specifies the tty line that will be written to the \"utmp\" database". The
+# shell is needed because dinit execs the command directly and does not
+# interpret redirections itself.
+#
+# No setsid here, and no console option, both deliberately. dinit's
+# src/run-child-proc.cc branches on on_console, which starts-on-console and
+# shares-console both set:
+#
+#     if (!on_console) { ... setsid(); }   <- child becomes a SESSION leader
+#     else { ...; setpgid(0,0); ... }      <- child becomes a GROUP leader
+#
+# So with shares-console the child leads its process group, and util-linux
+# setsid(1) forks when its caller already does -- measured -- which would
+# leave dinit supervising a parent that exits at once and, with restart = true,
+# restarting it forever. With no console option dinit calls setsid() itself,
+# the shell opens the terminal as session leader, and credentials(7) applies:
+# "The controlling terminal is established when the session leader first opens
+# a terminal (unless the O_NOCTTY flag is specified when calling open(2))."
+# Measured that way: the pid is preserved, so dinit supervises Sakura itself,
+# and the terminal is acquired.
+#
+# Dropping shares-console costs nothing here. It existed to share a console
+# Sakura no longer takes, and a service with no console option neither queues
+# for the console nor blocks services that hold it. dinit's non-console branch
+# also points stdin at /dev/null and stdout at a logfile before exec; the
+# redirection below replaces all three.
+command         = /bin/sh -c "exec $PREFIX_DIRECTORY/bin/$EXECUTABLE_NAME </dev/tty$DEFAULT_TTY >/dev/tty$DEFAULT_TTY 2>&1"
+# Action purpose: order against login.target without depending on it, because
+# login.target is not dinit's. It appears nowhere in dinit-service(5) or
+# dinit(8) -- the only service names those document as special are `boot` and
+# `recovery` -- so it comes from a distribution's service set, and this
+# installer does not ship it.
+#
+# depends-on was wrong on its own terms, whether or not the target exists.
+# dinit-service(5) makes it a "need" relationship: "Starting this service will
+# start the named service ... If the named service stops then this service will
+# also be stopped." Sakura owns its own terminal and needs nothing from that
+# target, so being stopped whenever it stops is a liability, not a safeguard.
+#
+# after gives the ordering alone: "if the named service is not starting,
+# starting this service will not cause it to start (nor wait for it in that
+# case). It does not by itself cause the named service to be loaded." So where
+# a distribution provides login.target, Sakura still starts after it; where
+# none exists, the line costs nothing. waits-for was rejected because it
+# "will automatically start the named service", which is not ours to start.
+after           = login.target
+termsignal      = HUP

@@ -65,7 +65,7 @@ pub fn info(self: *LogFile, io: std.Io, category: []const u8, comptime message: 
     } else {
         var buffer: [1024]u8 = undefined;
         const slice = try std.fmt.bufPrint(&buffer, message, args);
-        const msg = try std.fmt.bufPrintZ(buffer[slice.len..], "[info/{s}] {s}", .{ category, slice });
+        const msg = try std.fmt.bufPrintSentinel(buffer[slice.len..], "[info/{s}] {s}", .{ category, slice }, 0);
 
         std.posix.system.syslog(std.posix.LOG.INFO, msg.ptr);
     }
@@ -83,7 +83,7 @@ pub fn err(self: *LogFile, io: std.Io, category: []const u8, comptime message: [
     } else {
         var buffer: [1024]u8 = undefined;
         const slice = try std.fmt.bufPrint(&buffer, message, args);
-        const msg = try std.fmt.bufPrintZ(buffer[slice.len..], "[err/{s}] {s}", .{ category, slice });
+        const msg = try std.fmt.bufPrintSentinel(buffer[slice.len..], "[err/{s}] {s}", .{ category, slice }, 0);
 
         std.posix.system.syslog(std.posix.LOG.ERR, msg.ptr);
     }

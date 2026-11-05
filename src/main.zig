@@ -58,7 +58,7 @@ fn signalHandler(sig: std.posix.SIG) callconv(.c) void {
     }
 
     TerminalBuffer.shutdown() catch {};
-    std.c.exit(@intCast(@intFromEnum(sig)));
+    std.c.exit(@intCast(@backingInt(sig)));
 }
 
 fn ttyControlTransferSignalHandler(_: std.posix.SIG) callconv(.c) void {
@@ -157,8 +157,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var gpa: std.heap.DebugAllocator(.{
-        .never_unmap = builtin.mode == .Debug,
-        .retain_metadata = builtin.mode == .Debug,
+        .never_unmap = builtin.mode == .debug,
+        .retain_metadata = builtin.mode == .debug,
     }) = .init;
     defer if (gpa.deinit() == .leak) std.log.err("attention please, memory has been leaked!", .{});
 
@@ -293,7 +293,7 @@ pub fn main(init: std.process.Init) !void {
         migrator.lateConfigFieldHandler(&state.config, state.lang);
     }
 
-    var usernames = try getAllUsernames(state.allocator);
+    var usernames = try getAllUsernames(state.allocator, state.io, state.config.login_defs_path);
     defer {
         for (usernames.items) |username| state.allocator.free(username);
         usernames.deinit(state.allocator);
@@ -346,7 +346,7 @@ pub fn main(init: std.process.Init) !void {
         };
         const username_line = maybe_username_line orelse break :read_save_file;
 
-        if (std.mem.containsAtLeastScalar2(u8, username_line, '-', 1)) read_username: {
+        if (std.mem.containsAtLeastScalar(u8, username_line, '-', 1)) read_username: {
             var iterator = std.mem.splitScalar(u8, username_line, '-');
             if (iterator.next() == null) break :read_username; // Would be index
 
@@ -1313,8 +1313,8 @@ pub fn main(init: std.process.Init) !void {
     var iter = custom.binds.iterator();
     while (iter.next()) |i| {
         var concat = try std.mem.concat(state.allocator, u8, &[_][]const u8{ i.key_ptr.*, " ", i.value_ptr.name });
-        inline for (@typeInfo(Lang).@"struct".fields) |lang_key| {
-            const new = try std.mem.replaceOwned(u8, state.allocator, concat, "$" ++ lang_key.name, @field(state.lang, lang_key.name));
+        inline for (@typeInfo(Lang).@"struct".field_names) |lang_key| {
+            const new = try std.mem.replaceOwned(u8, state.allocator, concat, "$" ++ lang_key, @field(state.lang, lang_key));
             state.allocator.free(concat);
             concat = new;
         }
@@ -1918,8 +1918,14 @@ fn updateCapslock(self: *Label, ptr: *anyopaque) !void {
 fn updateBattery(self: *Label, ptr: *anyopaque) !void {
     var state: *UiState = @ptrCast(@alignCast(ptr));
 
-    if (state.config.battery_sysctl) |mib| {
-        const battery_percentage = getBatteryPercentage(mib) catch |err| {
+    // FreeBSD names the battery with a sysctl MIB and Linux with a
+    // power-supply directory under /sys, so each platform reads its own option
+    // and ignores the other's. Both keys always exist, so a configuration file
+    // moves between a FreeBSD and a Linux host without edits.
+    const battery_source = if (interop.is_freebsd) state.config.battery_sysctl else state.config.battery_id;
+
+    if (battery_source) |source| {
+        const battery_percentage = interop.getBatteryPercentage(source) catch |err| {
             self.update_fn = null;
             try state.log_file.err(
                 state.io,
@@ -2099,7 +2105,7 @@ fn updateBigClock(self: *BigLabel, ptr: *anyopaque) !void {
     const time = try interop.getTimeOfDay();
     const animate_time = @divTrunc(time.microseconds, 500_000);
     const separator = if (state.animate and animate_time != 0) " " else ":";
-    const format = try std.fmt.bufPrintZ(
+    const format = try std.fmt.bufPrintSentinel(
         &state.bigclock_format_buf,
         "{s}{s}{s}{s}{s}{s}",
         .{
@@ -2110,6 +2116,7 @@ fn updateBigClock(self: *BigLabel, ptr: *anyopaque) !void {
             if (state.config.bigclock_seconds) "%S" else "",
             if (state.config.bigclock_12hr) "%P" else "",
         },
+        0,
     );
 
     const clock_str = interop.timeAsString(state.io, &state.bigclock_buf, format);
@@ -2241,7 +2248,7 @@ fn positionSingleWidget(state: *UiState, item: []const u8, current_x: *usize, cu
         }
         return true;
     } else if (std.mem.eql(u8, item, "battery")) {
-        if (state.config.battery_sysctl == null) return false;
+        if ((if (interop.is_freebsd) state.config.battery_sysctl else state.config.battery_id) == null) return false;
         const width = TerminalBuffer.strWidth(state.battery_label.text);
         if (is_left) {
             state.battery_label.positionXY(Position.init(current_x.*, current_y));
@@ -2666,8 +2673,8 @@ fn findSessionByName(session: *Session, name: []const u8) ?usize {
     return null;
 }
 
-fn getAllUsernames(allocator: Allocator) !StringList {
-    const uid_range = interop.getUserIdRange();
+fn getAllUsernames(allocator: Allocator, io: std.Io, login_defs_path: ?[]const u8) !StringList {
+    const uid_range = interop.getUserIdRange(allocator, io, login_defs_path);
 
     var usernames: StringList = .empty;
     var maybe_entry = interop.getNextUsernameEntry();
@@ -2707,23 +2714,6 @@ fn adjustBrightness(io: std.Io, cmd: []const u8) !void {
     if (process_result.exited != 0) {
         return error.BrightnessChangeFailed;
     }
-}
-
-// Reads the remaining battery capacity, as a percentage, from the given
-// sysctl MIB (e.g. "hw.acpi.battery.life").
-fn getBatteryPercentage(mib: []const u8) !u8 {
-    var mib_buffer: [128]u8 = undefined;
-    const mib_z = std.fmt.bufPrintZ(&mib_buffer, "{s}", .{mib}) catch return error.BatterySysctlTooLong;
-
-    var capacity: c_int = -1;
-    var size: usize = @sizeOf(c_int);
-
-    const ret = interop.sysctl.sysctlbyname(mib_z.ptr, &capacity, &size, null, 0);
-
-    if (ret != 0) return error.SysctlFailed;
-    if (capacity < 0 or capacity > 100) return error.InvalidBatteryCapacity;
-
-    return @intCast(capacity);
 }
 
 fn getAuthErrorMsg(err: anyerror, lang: Lang) []const u8 {

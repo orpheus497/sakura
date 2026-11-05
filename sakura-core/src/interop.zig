@@ -1,242 +1,81 @@
+// Script function and purpose: the platform boundary. Everything that differs
+// between FreeBSD and Linux lives behind this one file, and nothing outside
+// src/interop/ may import a platform-specific C header.
+//
+// The dispatch selects a *file*, not a struct of function pointers or a
+// type-returning function, so each platform's implementation is free to take
+// exactly the parameters its own kernel needs. Two of them genuinely differ --
+// see `getUserIdRange` below -- and forcing a shared signature would mean
+// FreeBSD carrying arguments it never reads.
+//
+// `builtin.target.os.tag`, not `builtin.os.tag`: the latter is deprecated in
+// Zig 0.17.0 and removed in 0.18.0.
+
 const std = @import("std");
-const build_options = @import("build_options");
+const builtin = @import("builtin");
+
 const UidRange = @import("UidRange.zig");
-const consio = @import("consio");
-const kbio = @import("kbio");
-const pwd = @import("pwd");
-const reboot = @import("reboot");
-const stdlib = @import("stdlib");
-const system_time = @import("system_time");
-const time = @import("time");
-const unistd = @import("unistd");
 
-pub const pam = @import("pam");
-pub const utmp = @import("utmp");
-pub const sysctl = @import("sysctl");
-// Exists for X11 support only, so it is only imported when X11 support was
-// enabled at build time.
-pub const xcb = if (build_options.enable_x11_support) @import("xcb") else struct {};
-
-/// The FreeBSD console driver reports and sets the keyboard LEDs as an `int`
-/// bit mask.
-const LedState = c_int;
-
-pub const TimeOfDay = struct {
-    seconds: i64,
-    microseconds: i64,
+const impl = switch (builtin.target.os.tag) {
+    .freebsd => @import("interop/freebsd.zig"),
+    .linux => @import("interop/linux.zig"),
+    else => @compileError("unsupported target: " ++ @tagName(builtin.target.os.tag)),
 };
 
-pub const UsernameEntry = struct {
-    username: ?[]const u8,
-    uid: std.posix.uid_t,
-    gid: std.posix.gid_t,
-    home: ?[]const u8,
-    shell: ?[]const u8,
-    passwd_struct: [*]pwd.passwd,
-};
+/// True when this build targets the first-class platform. Call sites use this
+/// rather than re-deriving the target, so adding a platform touches one file.
+pub const is_freebsd = builtin.target.os.tag == .freebsd;
 
-/// FreeBSD libc returns -1 on failure and sets errno, so a plain sign check is
-/// all that is ever needed here.
-pub fn isError(result: anytype) bool {
-    comptime std.debug.assert(@typeInfo(@TypeOf(result)).int.signedness == .signed);
-    return result < 0;
-}
+// Translated C headers that application code legitimately reaches into. The
+// platform-only ones -- sysctl, kbio, consio on FreeBSD; kd, vt, grp on Linux
+// -- are deliberately absent: they stay private to the implementation files so
+// a FreeBSD-only header cannot be referenced from src/.
+pub const pam = impl.pam;
+pub const utmp = impl.utmp;
+pub const xcb = impl.xcb;
 
-/// FreeBSD's vt(4) console is UTF-8 capable.
-pub fn supportsUnicode() bool {
-    return true;
-}
+pub const TimeOfDay = impl.TimeOfDay;
+pub const UsernameEntry = impl.UsernameEntry;
 
-pub fn timeAsString(io: std.Io, buf: [:0]u8, format: [:0]const u8) []u8 {
-    const timer: isize = @intCast(std.Io.Timestamp.now(io, .real).toSeconds());
-    const tm_info = time.localtime(&timer);
-    const len = time.strftime(buf, buf.len, format, tm_info);
+pub const isError = impl.isError;
+pub const supportsUnicode = impl.supportsUnicode;
+pub const timeAsString = impl.timeAsString;
+pub const getTimeOfDay = impl.getTimeOfDay;
 
-    return buf[0..len];
-}
+pub const getActiveTty = impl.getActiveTty;
+pub const ttyDeviceName = impl.ttyDeviceName;
+pub const ttyDeviceNameZ = impl.ttyDeviceNameZ;
+pub const switchTty = impl.switchTty;
 
-pub fn getTimeOfDay() !TimeOfDay {
-    var tv: system_time.timeval = undefined;
-    const status = system_time.gettimeofday(&tv, null);
+pub const getLockState = impl.getLockState;
+pub const setNumlock = impl.setNumlock;
 
-    if (status != 0) return error.FailedToGetTimeOfDay;
+pub const setUserContext = impl.setUserContext;
+pub const setUserShell = impl.setUserShell;
+pub const setEnvironmentVariable = impl.setEnvironmentVariable;
+pub const putEnvironmentVariable = impl.putEnvironmentVariable;
 
-    return .{
-        .seconds = @intCast(tv.tv_sec),
-        .microseconds = @intCast(tv.tv_usec),
-    };
-}
+pub const getNextUsernameEntry = impl.getNextUsernameEntry;
+pub const getUsernameEntry = impl.getUsernameEntry;
+pub const closePasswordDatabase = impl.closePasswordDatabase;
 
-/// Returns the number of the virtual terminal this process is attached to.
-/// FreeBSD numbers virtual terminals starting at 1, while the device nodes
-/// backing them start at 0: VT 1 is /dev/ttyv0, VT 2 is /dev/ttyv1, and so on.
-/// See `ttyDeviceName()` for the mapping.
-pub fn getActiveTty() !u8 {
-    // VT_GETINDEX reports the index of the terminal behind the file
-    // descriptor, which is what we want: the one getty handed us, not
-    // whichever one happens to be in the foreground at this instant. Console
-    // drivers that don't implement it only offer VT_GETACTIVE.
-    const request = comptime if (@hasDecl(consio, "VT_GETINDEX")) consio.VT_GETINDEX else consio.VT_GETACTIVE;
+pub const getBatteryPercentage = impl.getBatteryPercentage;
+pub const shutdownSystem = impl.shutdownSystem;
+pub const rebootSystem = impl.rebootSystem;
 
-    var vt: c_int = 0;
-
-    const status = std.c.ioctl(std.posix.STDIN_FILENO, request, &vt);
-    if (status != 0) return error.FailedToGetActiveTty;
-    if (vt < 1 or vt > std.math.maxInt(u8)) return error.NoTtyFound;
-
-    return @intCast(vt);
-}
-
-/// Writes the device name of the virtual terminal `tty` (e.g. "ttyv1" for VT
-/// 2) into `buf` and returns it. FreeBSD names these devices with a single
-/// hexadecimal digit, so VT 11 is /dev/ttyva.
-pub fn ttyDeviceName(buf: []u8, tty: u8) ![]u8 {
-    return std.fmt.bufPrint(buf, "ttyv{x}", .{tty -| 1});
-}
-
-/// Same as `ttyDeviceName()`, but NUL-terminated for passing to C.
-pub fn ttyDeviceNameZ(buf: []u8, tty: u8) ![:0]u8 {
-    return std.fmt.bufPrintZ(buf, "ttyv{x}", .{tty -| 1});
-}
-
-pub fn switchTty(tty: u8) !void {
-    var status = std.c.ioctl(std.posix.STDIN_FILENO, consio.VT_ACTIVATE, tty);
-    if (status != 0) return error.FailedToActivateTty;
-
-    status = std.c.ioctl(std.posix.STDIN_FILENO, consio.VT_WAITACTIVE, tty);
-    if (status != 0) return error.FailedToWaitForActiveTty;
-}
-
-pub fn getLockState() !struct {
-    numlock: bool,
-    capslock: bool,
-} {
-    var led: LedState = undefined;
-    const status = std.c.ioctl(std.posix.STDIN_FILENO, kbio.KDGETLED, &led);
-    if (status != 0) return error.FailedToGetLockState;
-
-    return .{
-        .numlock = (led & kbio.LED_NUM) != 0,
-        .capslock = (led & kbio.LED_CAP) != 0,
-    };
-}
-
-pub fn setNumlock(val: bool) !void {
-    var led: LedState = undefined;
-    var status = std.c.ioctl(std.posix.STDIN_FILENO, kbio.KDGETLED, &led);
-    if (status != 0) return error.FailedToGetNumlock;
-
-    const numlock = (led & kbio.LED_NUM) != 0;
-    if (numlock != val) {
-        status = std.c.ioctl(std.posix.STDIN_FILENO, kbio.KDSETLED, led ^ kbio.LED_NUM);
-        if (status != 0) return error.FailedToSetNumlock;
-    }
-}
-
-pub fn setUserContext(allocator: std.mem.Allocator, entry: UsernameEntry) !void {
-    const username_z = try allocator.dupeZ(u8, entry.username.?);
-    defer allocator.free(username_z);
-
-    // FreeBSD has initgroups() in unistd
-    const status = unistd.initgroups(username_z.ptr, @intCast(entry.gid));
-    if (status != 0) return error.GroupInitializationFailed;
-
-    // FreeBSD sets the GID and UID with setusercontext()
-    const result = pwd.setusercontext(null, entry.passwd_struct, @intCast(entry.uid), pwd.LOGIN_SETALL);
-    if (result != 0) return error.SetUserUidFailed;
-}
-
-/// Fills in `entry.shell` from the first entry of /etc/shells, for an account
-/// whose passwd record names no shell. The name is copied into `buf`, which the
-/// caller owns and which must outlive `entry`.
+/// Function purpose: hide the one genuine signature divergence in the boundary.
 ///
-/// The copy is the point. `getusershell(3)` returns a pointer into a list
-/// `initshells()` allocated, and `endusershell(3)` frees that list, so keeping
-/// the returned pointer left `entry.shell` dangling into freed memory -- which
-/// was then duplicated and handed to `execve` as the program to run.
-pub fn setUserShell(entry: *UsernameEntry, buf: []u8) !void {
-    unistd.setusershell();
-    defer unistd.endusershell();
-
-    // getusershell() returns NULL once the list is exhausted, which is also
-    // what an empty or unreadable /etc/shells looks like on the first call.
-    const shell = unistd.getusershell();
-    if (shell == null) return error.NoUserShellAvailable;
-
-    const name = std.mem.span(shell);
-    // A name that exactly fills `buf` is fine: nothing here needs room for a
-    // terminator, since `entry.shell` is a plain slice and the callers that
-    // hand it to execve duplicate it with dupeZ.
-    if (name.len > buf.len) return error.UserShellTooLong;
-
-    @memcpy(buf[0..name.len], name[0..name.len]);
-    entry.shell = buf[0..name.len];
-}
-
-pub fn setEnvironmentVariable(allocator: std.mem.Allocator, name: []const u8, value: []const u8, replace: bool) !void {
-    const name_z = try allocator.dupeZ(u8, name);
-    defer allocator.free(name_z);
-
-    const value_z = try allocator.dupeZ(u8, value);
-    defer allocator.free(value_z);
-
-    const status = stdlib.setenv(name_z.ptr, value_z.ptr, @intFromBool(replace));
-    if (status != 0) return error.SetEnvironmentVariableFailed;
-}
-
-/// `putenv` keeps the pointer it is given rather than copying, so the buffer
-/// must be NUL-terminated and must outlive the environment entry.
-pub fn putEnvironmentVariable(name_and_value: [:0]u8) !void {
-    const status = stdlib.putenv(name_and_value.ptr);
-    if (status != 0) return error.PutEnvironmentVariableFailed;
-}
-
-pub fn getNextUsernameEntry() ?UsernameEntry {
-    const entry = pwd.getpwent();
-    if (entry == null) return null;
-
-    return .{
-        .username = if (entry.*.pw_name) |name| std.mem.span(name) else null,
-        .uid = @intCast(entry.*.pw_uid),
-        .gid = @intCast(entry.*.pw_gid),
-        .home = if (entry.*.pw_dir) |dir| std.mem.span(dir) else null,
-        .shell = if (entry.*.pw_shell) |shell| std.mem.span(shell) else null,
-        .passwd_struct = entry,
-    };
-}
-
-pub fn getUsernameEntry(username: [:0]const u8) ?UsernameEntry {
-    const entry = pwd.getpwnam(username);
-    if (entry == null) return null;
-
-    return .{
-        .username = if (entry.*.pw_name) |name| std.mem.span(name) else null,
-        .uid = @intCast(entry.*.pw_uid),
-        .gid = @intCast(entry.*.pw_gid),
-        .home = if (entry.*.pw_dir) |dir| std.mem.span(dir) else null,
-        .shell = if (entry.*.pw_shell) |shell| std.mem.span(shell) else null,
-        .passwd_struct = entry,
-    };
-}
-
-pub fn closePasswordDatabase() void {
-    pwd.endpwent();
-}
-
-/// FreeBSD has no /etc/login.defs to read a UID range from, so the bounds are
-/// baked into the binary at build time. See `UidRange`.
-pub fn getUserIdRange() UidRange {
-    return .{};
-}
-
-pub fn shutdownSystem() !void {
-    if (isError(unistd.reboot(reboot.RB_POWEROFF))) {
-        return error.CouldntShutdown;
-    }
-}
-
-pub fn rebootSystem() !void {
-    if (isError(unistd.reboot(reboot.RB_AUTOBOOT))) {
-        return error.CouldntReboot;
-    }
+/// FreeBSD has no /etc/login.defs, so its range is the pair baked in at build
+/// time and the call needs nothing. Linux reads UID_MIN/UID_MAX out of a file,
+/// so it needs an allocator, an `std.Io`, and the configurable path. Rather
+/// than give FreeBSD three parameters it discards -- which is what the
+/// pre-fork tree did -- the branch lives here and the call site passes what it
+/// has.
+pub fn getUserIdRange(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    login_defs_path: ?[]const u8,
+) UidRange {
+    if (is_freebsd) return impl.getUserIdRange();
+    return impl.getUserIdRange(allocator, io, login_defs_path orelse return .{});
 }
