@@ -179,7 +179,7 @@ Check what you got, because Sakura needs 0.17.0 or newer and the package set can
 lag behind upstream:
 
 ```sh
-$ zig version
+zig version
 ```
 
 If that prints anything below 0.17.0, fetch the upstream release instead of the
@@ -188,11 +188,11 @@ checksum against `https://ziglang.org/download/index.json` is worth the extra
 step:
 
 ```sh
-$ fetch https://ziglang.org/download/0.17.0/zig-x86_64-freebsd-0.17.0.tar.xz
+fetch https://ziglang.org/download/0.17.0/zig-x86_64-freebsd-0.17.0.tar.xz
 ```
 
 ```sh
-$ sha256 -q zig-x86_64-freebsd-0.17.0.tar.xz
+sha256 -q zig-x86_64-freebsd-0.17.0.tar.xz
 ```
 
 That digest must equal
@@ -463,8 +463,19 @@ take it from there rather than assuming:
 > Only one program may own a virtual terminal, so whatever `getty` is already
 > on yours has to go. The systemd unit declares that conflict itself
 > (`Conflicts=getty@%i.service`), so enabling it is enough. On every other init
-> system, disable the `getty` for that terminal by hand first — otherwise the
-> two fight over the terminal and the login UI flickers or never draws.
+> system you have to do it by hand, and it takes **two** commands, not one:
+>
+> 1. **Stop** the `getty` running on that terminal now, with that init system's
+>    stop command (`rc-service`, `sv down`, `s6-rc -d change`, `dinitctl stop`,
+>    or the `/etc/init.d` script).
+> 2. **Disable** it, so it does not come back at the next boot.
+>
+> Both, because they are different operations — the same distinction
+> [Uninstalling](#uninstalling) spells out for Sakura itself. Disabling without
+> stopping leaves the getty and Sakura fighting over the terminal for the rest
+> of this boot, which is when the login UI flickers or never draws; stopping
+> without disabling brings the getty back on reboot. The getty's service name is
+> distribution-specific, so check what yours calls it rather than guessing.
 
 Linux names virtual terminal devices in decimal with no offset, so virtual
 terminal 2 is `/dev/tty2` — not `/dev/ttyv1` as on FreeBSD. Build with
@@ -484,8 +495,8 @@ not itself supply; only the dinit service needs nothing but a shell:
 
 | Service | Also needs | Where it comes from |
 | --- | --- | --- |
-| `sysvinit` | `/lib/lsb/init-functions`, `start-stop-daemon`, and `update-rc.d` for the documented enable command | Three separate Debian-family packages, **not** SysVinit: `lsb-base` ships the init functions, `dpkg` ships `start-stop-daemon`, and `init-system-helpers` ships `update-rc.d`. On a SysVinit distribution without them the script fails at its `.` line before Sakura is reached |
-| `openrc`, `runit`, `s6` | `agetty` or BusyBox `getty` on `PATH` | util-linux or BusyBox. Each script checks and exits with a message naming the cause, so this one fails loudly rather than silently |
+| `sysvinit` | `/lib/lsb/init-functions`, `start-stop-daemon`, `setsid`, and `update-rc.d` for the documented enable command | Four different providers, **not** SysVinit: `lsb-base` ships the init functions, `dpkg` ships `start-stop-daemon`, `init-system-helpers` ships `update-rc.d`, and `setsid` comes from util-linux (or BusyBox, which ships it as an applet). Without the init functions the script fails at its `.` line before Sakura is reached |
+| `openrc`, `runit`, `s6` | `agetty` or BusyBox `getty` on `PATH`; the **runit** script also execs `setsid` | util-linux or BusyBox, which ship both (`setsid` is a BusyBox applet, enabled by default). Each script checks for the getty and exits with a message naming the cause. None checks for `setsid`, so that one surfaces as the shell's own `not found` and runit then restarts the service in a loop |
 | `systemd` | `/sbin/agetty` at that absolute path | util-linux. A unit cannot resolve a program at run time, so the path is fixed in `ExecStart` |
 | `dinit` | nothing beyond a shell | — |
 
@@ -1139,7 +1150,7 @@ synthesised at the exact cell size instead.
 It needs `python3` and `otf2bdf`; `vtfontcvt` is in the base system.
 
 ```sh
-$ python3 tools/mkvtfont.py -p 11 -o sakura-console.fnt \
+python3 tools/mkvtfont.py -p 11 -o sakura-console.fnt \
     /usr/local/share/fonts/nerd-fonts/Hurmit/HurmitNerdFontMono-Regular.otf
 # cp sakura-console.fnt /usr/share/vt/fonts/
 ```

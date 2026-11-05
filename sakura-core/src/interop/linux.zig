@@ -48,14 +48,15 @@ pub const UsernameEntry = struct {
     passwd_struct: [*]pwd.passwd,
 };
 
-/// glibc returns -1 on failure and sets errno, so a plain sign check is all
-/// that is ever needed here.
+/// Function purpose: report whether a libc call failed. glibc returns -1 on
+/// failure and sets errno, so a plain sign check is all that is ever needed
+/// here.
 pub fn isError(result: anytype) bool {
     comptime std.debug.assert(@typeInfo(@TypeOf(result)).int.signedness == .signed);
     return result < 0;
 }
 
-/// The Linux console is UTF-8 capable.
+/// Function purpose: state that the Linux console is UTF-8 capable.
 pub fn supportsUnicode() bool {
     return true;
 }
@@ -82,16 +83,16 @@ pub fn getTimeOfDay() !TimeOfDay {
 
 /// Function purpose: turn a device number into a virtual terminal index, or
 /// null when the device is not a virtual terminal at all. Shared by both
-/// strategies in `getActiveTty` so the two can never disagree about what
-/// counts as a VT.
+/// strategies in `getActiveTty` so the two can never disagree about what counts
+/// as a VT.
 fn vtFromDev(major: u32, minor: u32) ?u8 {
     if (major != vt_major) return null;
     if (minor < 1 or minor > vt_minor_max) return null;
     return @intCast(minor);
 }
 
-/// Action purpose: decompose a dev_t the way glibc's major()/minor() macros do.
-/// Writing `/ 256` and `% 256` happens to work for virtual terminals only
+/// Function purpose: decompose a dev_t the way glibc's major()/minor() macros
+/// do. Writing `/ 256` and `% 256` happens to work for virtual terminals only
 /// because both numbers are small; spelling out the real encoding is what keeps
 /// this correct if it is ever handed a different device.
 fn devMajor(dev: u64) u32 {
@@ -102,9 +103,9 @@ fn devMinor(dev: u64) u32 {
     return @intCast((dev & 0xff) | ((dev >> 12) & ~@as(u64, 0xff)));
 }
 
-/// Returns the number of the virtual terminal this process is attached to.
-/// Linux numbers virtual terminals from 1 and names the device nodes to match:
-/// VT 1 is /dev/tty1, with no offset. See `ttyDeviceName()`.
+/// Function purpose: return the number of the virtual terminal this process is
+/// attached to. Linux numbers virtual terminals from 1 and names the device
+/// nodes to match: VT 1 is /dev/tty1, with no offset. See `ttyDeviceName()`.
 ///
 /// Linux has no VT_GETINDEX. The two interfaces that look like substitutes --
 /// /sys/class/tty/tty0/active and VT_GETSTATE's v_active -- both report the
@@ -165,14 +166,15 @@ fn getActiveTtyFromProc() !u8 {
     return vtFromDev(devMajor(dev), devMinor(dev)) orelse error.NoTtyFound;
 }
 
-/// Writes the device name of the virtual terminal `tty` (e.g. "tty2" for VT 2)
-/// into `buf` and returns it. Linux names these devices in decimal with no
-/// offset, unlike FreeBSD. See console(4).
+/// Function purpose: write the device name of the virtual terminal `tty` (e.g.
+/// "tty2" for VT 2) into `buf` and return it. Linux names these devices in
+/// decimal with no offset, unlike FreeBSD. See console(4).
 pub fn ttyDeviceName(buf: []u8, tty: u8) ![]u8 {
     return std.fmt.bufPrint(buf, "tty{d}", .{tty});
 }
 
-/// Same as `ttyDeviceName()`, but NUL-terminated for passing to C.
+/// Function purpose: same as `ttyDeviceName()`, but NUL-terminated for passing
+/// to C.
 pub fn ttyDeviceNameZ(buf: []u8, tty: u8) ![:0]u8 {
     return std.fmt.bufPrintSentinel(buf, "tty{d}", .{tty}, 0);
 }
@@ -219,12 +221,13 @@ pub fn setNumlock(val: bool) !void {
     }
 }
 
-/// Linux has no setusercontext(3). The triple below is the closest equivalent
-/// and is *not* equal to it: FreeBSD's LOGIN_SETALL also applies the login
-/// class, resource limits, umask, priority, MAC label, CPU mask and the
-/// LANG/TZ/TERM environment. On Linux those come from PAM instead -- pam_limits,
-/// pam_umask and pam_env in the session stack -- so they are configured in the
-/// PAM policy rather than here.
+/// Function purpose: drop to the target user's credentials. Linux has no
+/// setusercontext(3); the triple below is the closest equivalent and is *not*
+/// equal to it: FreeBSD's LOGIN_SETALL also applies the login class, resource
+/// limits, umask, priority, MAC label, CPU mask and the LANG/TZ/TERM
+/// environment. On Linux those come from PAM instead -- pam_limits, pam_umask
+/// and pam_env in the session stack -- so they are configured in the PAM policy
+/// rather than here.
 pub fn setUserContext(allocator: std.mem.Allocator, entry: UsernameEntry) !void {
     const username_z = try allocator.dupeSentinel(u8, entry.username.?, 0);
     defer allocator.free(username_z);
@@ -238,9 +241,9 @@ pub fn setUserContext(allocator: std.mem.Allocator, entry: UsernameEntry) !void 
     if (isError(std.posix.system.setuid(@intCast(entry.uid)))) return error.SetUserUidFailed;
 }
 
-/// Fills in `entry.shell` from the first entry of /etc/shells, for an account
-/// whose passwd record names no shell. The name is copied into `buf`, which the
-/// caller owns and which must outlive `entry`.
+/// Function purpose: fill in `entry.shell` from the first entry of /etc/shells,
+/// for an account whose passwd record names no shell. The name is copied into
+/// `buf`, which the caller owns and which must outlive `entry`.
 ///
 /// The copy is the point. `getusershell(3)` returns a pointer into a list the
 /// library allocated, and `endusershell(3)` frees that list, so keeping the
@@ -276,8 +279,9 @@ pub fn setEnvironmentVariable(allocator: std.mem.Allocator, name: []const u8, va
     if (status != 0) return error.SetEnvironmentVariableFailed;
 }
 
-/// `putenv` keeps the pointer it is given rather than copying, so the buffer
-/// must be NUL-terminated and must outlive the environment entry.
+/// Function purpose: place a variable in the environment. `putenv` keeps the
+/// pointer it is given rather than copying, so the buffer must be
+/// NUL-terminated and must outlive the environment entry.
 pub fn putEnvironmentVariable(name_and_value: [:0]u8) !void {
     const status = stdlib.putenv(name_and_value.ptr);
     if (status != 0) return error.PutEnvironmentVariableFailed;
@@ -315,10 +319,11 @@ pub fn closePasswordDatabase() void {
     pwd.endpwent();
 }
 
-/// Reads the regular-account UID range from login.defs(5). `path` is
-/// configurable because the file's location is a shadow-utils compile-time
-/// default rather than a standard, and the build-time bounds are the fallback
-/// for a file that is missing, unreadable, or silent on either bound.
+/// Function purpose: read the regular-account UID range from login.defs(5).
+/// `path` is configurable because the file's location is a shadow-utils
+/// compile-time default rather than a standard, and the build-time bounds are
+/// the fallback for a file that is missing, unreadable, or silent on either
+/// bound.
 ///
 /// Note the Linux default UID_MAX is 60000, where FreeBSD's pw(8) uses 32000,
 /// so the build-time default must not be assumed to suit both.
@@ -370,8 +375,8 @@ fn parseLoginDefsValue(comptime T: type, comptime name: []const u8, line: []cons
     return std.fmt.parseInt(T, rest, 10) catch null;
 }
 
-/// Reads the remaining battery capacity as a percentage. `source` is a
-/// power-supply name under /sys/class/power_supply, e.g. "BAT0".
+/// Function purpose: read the remaining battery capacity as a percentage.
+/// `source` is a power-supply name under /sys/class/power_supply, e.g. "BAT0".
 ///
 /// `capacity` is preferred but the kernel does not synthesise it for drivers
 /// that do not report it, so energy_now/energy_full is the fallback. See the
@@ -426,10 +431,11 @@ fn readSysfsUnsigned(path: []const u8) ?u64 {
     return std.fmt.parseInt(u64, text, 10) catch null;
 }
 
-/// Linux's reboot(2) does not sync first -- the man page notes for each of
-/// these operations that "if not preceded by a sync(2), data will be lost".
-/// FreeBSD's reboot(2) syncs unless RB_NOSYNC is given, so this is a real
-/// asymmetry and the sync below must not be factored out as common code.
+/// Function purpose: power the machine down. Linux's reboot(2) does not sync
+/// first -- the man page notes for each of these operations that "if not
+/// preceded by a sync(2), data will be lost". FreeBSD's reboot(2) syncs unless
+/// RB_NOSYNC is given, so this is a real asymmetry and the sync below must not
+/// be factored out as common code.
 ///
 /// std.posix.reboot is used rather than the libc wrapper or a hand-rolled
 /// syscall. The libc constant names differ between the two kernels -- FreeBSD
