@@ -115,9 +115,8 @@ fn devMinor(dev: u64) u32 {
 /// behind this file descriptor", the same question VT_GETINDEX answers on
 /// FreeBSD.
 pub fn getActiveTty() !u8 {
-    // Strategy 1: TIOCGDEV reports the device number of the VT behind the file
-    // descriptor, without depending on a controlling terminal.
-    //
+    // Action purpose: Strategy 1: TIOCGDEV reports the device number of the VT
+    // behind the file descriptor, without depending on a controlling terminal.
     // Action purpose: the request has to be bit-cast rather than passed
     // directly. Linux's _IOR sets its direction bits as _IOC_READ << 30, i.e.
     // 0x80000000, so TIOCGDEV is 0x80045432 -- above c_int's maximum, which is
@@ -129,9 +128,10 @@ pub fn getActiveTty() !u8 {
         if (vtFromDev(devMajor(dev), devMinor(dev))) |tty| return tty;
     }
 
-    // Strategy 2: /proc/self/stat field 7 is tty_nr, the controlling terminal's
-    // device number. Used when stdin has been redirected but the controlling
-    // terminal is still the VT, which is how some init systems start us.
+    // Action purpose: Strategy 2: /proc/self/stat field 7 is tty_nr, the
+    // controlling terminal's device number. Used when stdin has been redirected
+    // but the controlling terminal is still the VT, which is how some init
+    // systems start us.
     return getActiveTtyFromProc();
 }
 
@@ -153,12 +153,13 @@ fn getActiveTtyFromProc() !u8 {
     if (close_paren + 2 > stat.len) return error.NoTtyFound;
 
     var fields = std.mem.tokenizeScalar(u8, stat[close_paren + 2 ..], ' ');
-    // state, ppid, pgrp, session, tty_nr
+    // Action purpose: skip the four fields between the executable name and
+    // tty_nr -- state, ppid, pgrp and session.
     for (0..4) |_| _ = fields.next() orelse return error.NoTtyFound;
     const tty_nr_str = fields.next() orelse return error.NoTtyFound;
 
-    // tty_nr is a signed 32-bit field and is 0 when the process has no
-    // controlling terminal.
+    // Action purpose: tty_nr is a signed 32-bit field and is 0 when the process
+    // has no controlling terminal.
     const tty_nr = std.fmt.parseInt(i32, tty_nr_str, 10) catch return error.NoTtyFound;
     if (tty_nr <= 0) return error.NoTtyFound;
 
@@ -195,11 +196,11 @@ pub fn getLockState() !struct {
     const status = std.c.ioctl(std.posix.STDIN_FILENO, kd.KDGKBLED, &led);
     if (status != 0) return error.FailedToGetLockState;
 
-    // K_NUMLOCK and K_CAPSLOCK, not LED_NUM and LED_CAP: the LED_* values
-    // belong to the KDGETLED pair and are not interchangeable with these. Note
-    // also that FreeBSD's LED_CAP and LED_SCR are numerically swapped relative
-    // to Linux's K_CAPSLOCK and K_SCROLLLOCK, which is why every constant here
-    // comes from this platform's own header.
+    // Action purpose: K_NUMLOCK and K_CAPSLOCK, not LED_NUM and LED_CAP: the
+    // LED_* values belong to the KDGETLED pair and are not interchangeable with
+    // these. Note also that FreeBSD's LED_CAP and LED_SCR are numerically
+    // swapped relative to Linux's K_CAPSLOCK and K_SCROLLLOCK, which is why
+    // every constant here comes from this platform's own header.
     return .{
         .numlock = (led & kd.K_NUMLOCK) != 0,
         .capslock = (led & kd.K_CAPSLOCK) != 0,
@@ -213,8 +214,8 @@ pub fn setNumlock(val: bool) !void {
 
     const numlock = (led & kd.K_NUMLOCK) != 0;
     if (numlock != val) {
-        // The set side takes the mask by value as an unsigned long, where the
-        // get side took a pointer to one byte.
+        // Action purpose: the set side takes the mask by value as an unsigned
+        // long, where the get side took a pointer to one byte.
         const mask: c_ulong = @intCast(led ^ kd.K_NUMLOCK);
         status = std.c.ioctl(std.posix.STDIN_FILENO, kd.KDSKBLED, mask);
         if (status != 0) return error.FailedToSetNumlock;
@@ -232,11 +233,12 @@ pub fn setUserContext(allocator: std.mem.Allocator, entry: UsernameEntry) !void 
     const username_z = try allocator.dupeSentinel(u8, entry.username.?, 0);
     defer allocator.free(username_z);
 
-    // Linux has initgroups() in grp, not unistd.
+    // Action purpose: Linux has initgroups() in grp, not unistd.
     const status = grp.initgroups(username_z.ptr, @intCast(entry.gid));
     if (status != 0) return error.GroupInitializationFailed;
 
-    // Order matters: dropping the group must happen while still privileged.
+    // Action purpose: order matters: dropping the group must happen while still
+    // privileged.
     if (isError(std.posix.system.setgid(@intCast(entry.gid)))) return error.SetUserGidFailed;
     if (isError(std.posix.system.setuid(@intCast(entry.uid)))) return error.SetUserUidFailed;
 }
@@ -253,15 +255,16 @@ pub fn setUserShell(entry: *UsernameEntry, buf: []u8) !void {
     unistd.setusershell();
     defer unistd.endusershell();
 
-    // getusershell() returns NULL once the list is exhausted, which is also
-    // what an empty or unreadable /etc/shells looks like on the first call.
+    // Action purpose: getusershell() returns NULL once the list is exhausted,
+    // which is also what an empty or unreadable /etc/shells looks like on the
+    // first call.
     const shell = unistd.getusershell();
     if (shell == null) return error.NoUserShellAvailable;
 
     const name = std.mem.span(shell);
-    // A name that exactly fills `buf` is fine: nothing here needs room for a
-    // terminator, since `entry.shell` is a plain slice and the callers that
-    // hand it to execve duplicate it with dupeSentinel.
+    // Action purpose: a name that exactly fills `buf` is fine: nothing here
+    // needs room for a terminator, since `entry.shell` is a plain slice and the
+    // callers that hand it to execve duplicate it with dupeSentinel.
     if (name.len > buf.len) return error.UserShellTooLong;
 
     @memcpy(buf[0..name.len], name[0..name.len]);
@@ -370,7 +373,8 @@ pub fn getUserIdRange(allocator: std.mem.Allocator, io: std.Io, path: []const u8
 fn parseLoginDefsValue(comptime T: type, comptime name: []const u8, line: []const u8) ?T {
     if (!std.mem.startsWith(u8, line, name)) return null;
     const rest = std.mem.trim(u8, line[name.len..], " \t");
-    // Guard against UID_MIN matching a longer key that merely starts the same.
+    // Action purpose: guard against UID_MIN matching a longer key that merely
+    // starts the same.
     if (rest.len == line.len - name.len) return null;
     return std.fmt.parseInt(T, rest, 10) catch null;
 }

@@ -26,9 +26,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    // Headers both platforms provide at the same path. PAM is OpenPAM in the
-    // FreeBSD base system and Linux-PAM on Linux; the application-facing API in
-    // security/pam_appl.h is the same for what Sakura uses.
+    // Action purpose: headers both platforms provide at the same path. PAM is
+    // OpenPAM in the FreeBSD base system and Linux-PAM on Linux; the
+    // application-facing API in security/pam_appl.h is the same for what Sakura
+    // uses.
     addCImport(b, mod, translate_c, target, optimize, "pam", "#include <security/pam_appl.h>");
     addCImport(b, mod, translate_c, target, optimize, "utmp", "#include <utmpx.h>");
     if (enable_x11_support) {
@@ -41,15 +42,15 @@ pub fn build(b: *std.Build) void {
 
     switch (target.result.os.tag) {
         .freebsd => {
-            // login_cap.h backs setusercontext(3) and has no Linux counterpart,
-            // so it is only pulled in here.
+            // Action purpose: login_cap.h backs setusercontext(3) and has no
+            // Linux counterpart, so it is only pulled in here.
             addCImport(b, mod, translate_c, target, optimize, "pwd",
                 \\#include <sys/types.h>
                 \\#include <pwd.h>
                 \\#include <login_cap.h>
             );
 
-            // FreeBSD console & power management interfaces.
+            // Action purpose: FreeBSD console & power management interfaces.
             addCImport(b, mod, translate_c, target, optimize, "kbio", "#include <sys/kbio.h>");
             addCImport(b, mod, translate_c, target, optimize, "consio", "#include <sys/consio.h>");
             addCImport(b, mod, translate_c, target, optimize, "sysctl",
@@ -66,13 +67,15 @@ pub fn build(b: *std.Build) void {
                 \\#include <sys/types.h>
                 \\#include <pwd.h>
             );
-            // initgroups(3) is declared in grp.h on glibc, not unistd.h.
+            // Action purpose: initgroups(3) is declared in grp.h on glibc, not
+            // unistd.h.
             addCImport(b, mod, translate_c, target, optimize, "grp", "#include <grp.h>");
 
-            // Linux console interfaces. These are <linux/*.h>, not the
-            // <sys/kd.h> and <sys/vt.h> the pre-fork tree used: those are not
-            // present on current glibc. TIOCGDEV comes from asm/ioctls.h, which
-            // is grouped with the VT header because getActiveTty() needs both.
+            // Action purpose: Linux console interfaces. These are <linux/*.h>,
+            // not the <sys/kd.h> and <sys/vt.h> the pre-fork tree used: those
+            // are not present on current glibc. TIOCGDEV comes from
+            // asm/ioctls.h, which is grouped with the VT header because
+            // getActiveTty() needs both.
             addCImport(b, mod, translate_c, target, optimize, "kd", "#include <linux/kd.h>");
             addCImport(b, mod, translate_c, target, optimize, "vt",
                 \\#include <linux/vt.h>
