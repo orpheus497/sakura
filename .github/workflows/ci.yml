@@ -90,6 +90,15 @@ jobs:
       - run: zig build test
       - run: ./zig-out/bin/sakura --validate-config res/config.ini
       - run: zig build -Denable_x11_support=false
+      # Action purpose: compile and run install.zig, which no other step does.
+      # Zig builds it only when an install step is requested, and `zig fmt
+      # --check` parses without type-checking, so an installer that cannot
+      # compile passes every other job in this file. -Ddest_directory stages
+      # every write beneath a scratch root, so this needs no privileges and
+      # touches nothing outside it. The assertion names the one artefact the
+      # init system is pointed at, so a silent partial install fails here.
+      - run: zig build installexe -Ddest_directory=/tmp/stage
+      - run: test -f /tmp/stage/usr/lib/systemd/system/sakura@.service
 
   linux-distro:
     name: Build and test on ${{ matrix.name }}
@@ -148,12 +157,11 @@ jobs:
       # build must therefore happen on a real FreeBSD userland.
       #
       # `release` is pinned rather than left to the action's default so the
-      # userland cannot change under the build. 14.3 is a supported release and
-      # satisfies Zig 0.17.0's documented minimum of FreeBSD 14.0.
+      # userland cannot change under the build.
       - name: Build in a FreeBSD VM
         uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
         with:
-          release: "14.3"
+          release: "15.1"
           envs: "ZIG_VERSION ZIG_FREEBSD_SHA256"
           # The toolchain is unpacked outside the synced working copy, so
           # copyback has nothing large to rsync back to the host runner.
@@ -201,3 +209,16 @@ jobs:
             ./zig-out/bin/sakura --validate-config res/config.ini
             # The X11 path is optional at build time, so check it still compiles out.
             zig build -Denable_x11_support=false
+
+            # Action purpose: compile and run install.zig, which no other step
+            # does. Zig builds it only when an install step is requested, and
+            # `zig fmt --check` parses without type-checking, so an installer
+            # that cannot compile passes every other job in this file -- while
+            # `zig build` still produces zig-out/bin/sakura, which makes the
+            # failure read as a warning. -Ddest_directory stages every write
+            # beneath a scratch root, so this needs no privileges and touches
+            # nothing outside it. The assertion names the program getty(8)
+            # execs through the lo= capability in gettytab.example: if that is
+            # absent, /etc/ttys points at nothing and the terminal is dead.
+            zig build installexe -Ddest_directory=/tmp/stage
+            test -x /tmp/stage/usr/local/bin/sakura_wrapper
