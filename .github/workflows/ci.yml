@@ -157,12 +157,11 @@ jobs:
       # build must therefore happen on a real FreeBSD userland.
       #
       # `release` is pinned rather than left to the action's default so the
-      # userland cannot change under the build. 14.3 is a supported release and
-      # satisfies Zig 0.17.0's documented minimum of FreeBSD 14.0.
+      # userland cannot change under the build.
       - name: Build in a FreeBSD VM
         uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
         with:
-          release: "14.3"
+          release: "15.1"
           envs: "ZIG_VERSION ZIG_FREEBSD_SHA256"
           # The toolchain is unpacked outside the synced working copy, so
           # copyback has nothing large to rsync back to the host runner.
