@@ -20,55 +20,36 @@ denominator portability layer. Everything platform-specific lives in one place,
 `sakura-core/src/interop/`, and the differences that remain visible to users are
 listed under [Platform differences](#platform-differences).
 
-Sakura is also the login layer of the **Sakura desktop**, a four-part Wayland
+Sakura is also the login layer of the **Sakura desktop**, a two-part Wayland
 desktop environment built specifically for FreeBSD alongside
-[hikari-sakura](https://github.com/orpheus497/hikari-sakura), the compositor,
-[saber](https://github.com/orpheus497/saber), its panel, and
-[Sofi](https://github.com/orpheus497/sofi), its overlays. Sakura is the piece
-that comes first — it is where the desktop takes its name from, and it is what
-authenticates you and hands the machine over to the other three. See
+[hikari-sakura](https://github.com/orpheus497/hikari-sakura), the compositor.
+Sakura is the piece that comes first — it is where the desktop takes its name
+from, and it is what authenticates you and hands the machine over. See
 [The Sakura desktop](#the-sakura-desktop) below.
 
-It stands on its own, though. Nothing here depends on the other three projects:
-Sakura launches any X11, Wayland or shell session that any other login manager
-would, and the desktop is an option rather than a requirement.
+It stands on its own, though. Nothing here depends on hikari-sakura: Sakura
+launches any X11, Wayland or shell session that any other login manager would,
+and the desktop is an option rather than a requirement.
 
 ## The Sakura desktop
 
-Four programs make up a complete Wayland desktop for FreeBSD. Each is a
+Two programs make up a complete Wayland desktop for FreeBSD. Each is a
 separate repository, separately buildable and separately useful, and each
-covers one layer that the other three deliberately do not:
+covers one layer that the other deliberately does not:
 
 | Component | Layer | What it is | License |
 | --- | --- | --- | --- |
 | **Sakura** (this repository) | Login | A TUI display manager on the `vt(4)` console. Authenticates through OpenPAM and launches the session. | BSD 2-Clause |
 | **[hikari-sakura](https://github.com/orpheus497/hikari-sakura)** | Compositor | A stacking Wayland compositor with tiling, built on wlroots. Organises windows into *views*, *groups*, *sheets* and a *workspace*, and draws its own top bar and lock screen. | BSD 2-Clause |
-| **[saber](https://github.com/orpheus497/saber)** | Panel | The always-present surface: a Unity 7-style vertical launcher down the left edge carrying running-application tiles, quicklists, the system tray and session controls. | MIT |
-| **[Sofi](https://github.com/orpheus497/sofi)** | Overlays | Every surface that is summoned rather than always present — application menu, control panel, sheet switcher, volume and network panes — plus the notification daemon. | MIT |
 
 The split is along process and privilege boundaries rather than taste. Sakura
-runs before there is a graphical session at all and is the only one of the four
-that touches PAM. hikari-sakura owns the Wayland session. saber and Sofi are
-ordinary unprivileged clients drawing through `zwlr_layer_shell_v1`, so a bug in
-either cannot take the compositor down with it.
-
-**saber and Sofi divide by persistence, not by subject.** saber is on screen for
-the whole session and reserves an exclusive zone, so windows tile beside it
-rather than under it; every Sofi surface is summoned by a keypress, does one
-job, dismisses on selection, and reserves no space. The two therefore coexist
-even where they cover the same ground — saber's Dash is a docked application
-grid and `sofi -show drun` is a summoned one, and running both is normal.
-
-There is **one hard conflict, and it is the system tray**: only one process can
-own `org.kde.StatusNotifierWatcher`. saber owns the tray, and `sofi -tray-daemon`
-must be left out of any session that runs saber — see
-[Running hikari-sakura](#running-hikari-sakura). Notifications go the other way:
-they are Sofi's, and saber does not implement them at all.
+runs before there is a graphical session at all and is the only one of the two
+that touches PAM. hikari-sakura owns the Wayland session.
 
 ### Where the names come from
 
-Sakura, this display manager, was named first. The two forks in the set carry
-that name outward, each in the shape its own ancestry allowed:
+Sakura, this display manager, was named first. The fork in the set carries that
+name outward, in the shape its own ancestry allowed:
 
 - **hikari-sakura** takes *hikari* from the compositor it forks —
   [`antaz/hikari`](https://github.com/antaz/hikari), originally by `raichoo`,
@@ -76,19 +57,10 @@ that name outward, each in the shape its own ancestry allowed:
   of the name is what marks it as part of this desktop rather than a
   continuation of the original.
 
-- **Sofi** inherited its shape from [rofi](https://github.com/davatorium/rofi),
-  which it hard-forked, and was then given a meaning of its own: the **Sakura
-  Official Full Indexer**. *Indexer* is the literal job — applications, windows,
-  sheets, notifications and tray items are all indexes rendered to a surface.
-  *Full* is the scope, and *Sakura Official* is the family.
-
-- **saber** is not a fork and inherits nothing, so it has no such lineage to
-  record; the name simply names it.
-
 Where a project came from something, then, the name says so and carries Sakura's
-mark for what it became part of. Where it did not, it does not pretend to.
+mark for what it became part of.
 
-### How the four fit together at runtime
+### How the two fit together at runtime
 
 The hand-off runs in one direction, and each stage exits or backgrounds itself
 once the next has taken over:
@@ -104,10 +76,7 @@ once the next has taken over:
 4. That entry runs `start-hikari`, which prepares `XDG_RUNTIME_DIR`, clears any
    leaked `WAYLAND_DISPLAY`/`DISPLAY`, wraps the session in D-Bus if needed, and
    execs the compositor.
-5. hikari-sakura runs `~/.config/hikari/autostart` on startup, which is where
-   the two resident programs belong: **saber**, which stays on screen for the
-   session, and **Sofi**'s notification daemon.
-6. Logging out returns you to Sakura, which redraws the login box on the same
+5. Logging out returns you to Sakura, which redraws the login box on the same
    virtual terminal.
 
 Setting the desktop up from Sakura's side is covered in
@@ -1258,34 +1227,11 @@ hikari-sakura's readme:
   `posix_fallocate` fail there, so on a ZFS-root system `/tmp` needs to be
   backed by `tmpfs`.
 
-**Starting saber and Sofi.** Two programs in the desktop are resident and should
-come up with the session rather than be bound to a key:
-[saber](https://github.com/orpheus497/saber), the panel, and
-[Sofi](https://github.com/orpheus497/sofi)'s notification daemon. They belong in
-hikari-sakura's autostart file, `~/.config/hikari/autostart`, not in Sakura's
-`setup.sh` — `setup.sh` runs before the compositor exists, so a layer-shell
-client started there has nothing to attach to:
-
-```sh
-#!/bin/sh
-sofi -notification-daemon &
-saber &
-```
-
-Make it executable.
-
-> [!IMPORTANT]
-> **Do not add `sofi -tray-daemon` to that file if you run saber.** Only one
-> process can own `org.kde.StatusNotifierWatcher`, saber owns the tray, and the
-> loser leaves its tray zone empty. It does not resolve itself when you stop the
-> loser either: a tray application asks whether a host exists once, at its own
-> startup, so applications started meanwhile need restarting. If you *do not*
-> run saber, `sofi -tray-daemon` is the tray to use and belongs in the file.
-
-Sofi's summoned surfaces need no autostart at all; hikari-sakura's default
-`hikari.conf` already binds them as actions (`sofi -show drun`,
-`sofi -show window`, `sofi -show sheets`). saber needs none either beyond the
-line above — it draws its own launcher, tray and session controls once running.
+**Starting session programs.** Anything that should come up with the session
+rather than be bound to a key belongs in hikari-sakura's autostart file,
+`~/.config/hikari/autostart`, not in Sakura's `setup.sh` — `setup.sh` runs
+before the compositor exists, so a layer-shell client started there has nothing
+to attach to. Make that file executable.
 
 > [!NOTE]
 > `x_vt` does not apply here. It exists because Xorg and the console fight over
@@ -1445,14 +1391,10 @@ The theming is heavily inspired by
 [sddm-astronaut-theme](https://github.com/Keyitdev/sddm-astronaut-theme), and the
 default wallpaper `pixel_sakura.gif` comes directly from there.
 
-Two of the other three components of the Sakura desktop are forks in the same
-spirit, and credit their own ancestry in their repositories:
+The other component of the Sakura desktop is a fork in the same spirit, and
+credits its own ancestry in its repository:
 [hikari-sakura](https://github.com/orpheus497/hikari-sakura) revives
-[`antaz/hikari`](https://github.com/antaz/hikari) by `raichoo`, and
-[Sofi](https://github.com/orpheus497/sofi) is a hard fork of
-[rofi](https://github.com/davatorium/rofi) by Qball Cow, itself descended from
-Sean Pringle's simpleswitcher. [saber](https://github.com/orpheus497/saber) is
-not a fork — it is original work in the tradition of the Unity 7 launcher.
+[`antaz/hikari`](https://github.com/antaz/hikari) by `raichoo`.
 
 ## License
 
@@ -1464,7 +1406,6 @@ are noted in `license.md`: `res/setup.sh` keeps its own notice, and the bundled
 dependencies keep their own licenses (MIT and BSD).
 
 The rest of the desktop is licensed separately and independently: hikari-sakura
-under BSD 2-Clause (retaining `raichoo`'s upstream notice), saber under MIT, and
-Sofi under MIT/X11 (retaining rofi's and simpleswitcher's). All four are
+is under BSD 2-Clause, retaining `raichoo`'s upstream notice. Both are
 permissive and non-copyleft, so the desktop can be redistributed as a whole, but
 each project's own license file governs its own code.
