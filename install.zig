@@ -391,7 +391,7 @@ fn installServiceFile(
     directory: []const u8,
     source: []const u8,
     destination: []const u8,
-    mode: std.Io.File.Mode,
+    mode: std.posix.mode_t,
 ) !void {
     const service_path = try std.Io.Dir.path.join(allocator, &[_][]const u8{ dest_directory, prefix, directory });
     defer allocator.free(service_path);
@@ -516,7 +516,7 @@ fn installText(
     destination_directory: std.Io.Dir,
     destination_directory_path: []const u8,
     destination_file: []const u8,
-    options: std.Io.File.CreateFlags,
+    options: std.Io.Dir.CreateFileOptions,
 ) !void {
     var file = try destination_directory.createFile(io, destination_file, options);
     defer file.close(io);

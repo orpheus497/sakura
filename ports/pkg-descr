@@ -16,5 +16,5 @@ one, and the login box, colours, corner widgets and key bindings are all
 configurable.
 
 Sakura is the login layer of the Sakura desktop, alongside the hikari-sakura
-compositor and the Sofi shell, but depends on neither and will launch any
-session another display manager would.
+compositor, but does not depend on it and will launch any session another
+display manager would.
