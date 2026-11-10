@@ -43,8 +43,11 @@ covers one layer that the other deliberately does not:
 | **[hikari-sakura](https://github.com/orpheus497/hikari-sakura)** | Compositor | A stacking Wayland compositor with tiling, built on wlroots. Organises windows into *views*, *groups*, *sheets* and a *workspace*, and draws its own top bar and lock screen. | BSD 2-Clause |
 
 The split is along process and privilege boundaries rather than taste. Sakura
-runs before there is a graphical session at all and is the only one of the two
-that touches PAM. hikari-sakura owns the Wayland session.
+runs before there is a graphical session at all: it authenticates your login
+through its own PAM policies, then hands the machine over. hikari-sakura owns
+the Wayland session from there, and reaches for PAM only to unlock a locked
+screen, through a separate `hikari-unlocker` helper with a PAM policy of its
+own.
 
 ### Where the names come from
 
