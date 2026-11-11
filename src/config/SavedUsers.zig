@@ -7,8 +7,21 @@ const User = struct {
     session_index: usize,
     first_run: bool,
     allocated_username: bool,
-    /// Field purpose: The name of the saved session, where one is known, so the
-    /// selection can be restored by identity instead of by position.
+    /// Field purpose: The identity of the saved session, where one is known, so
+    /// the selection can be restored by it instead of by position.
+    ///
+    /// Written as "<display server>/<desktop file name stem>", for example
+    /// "wayland/hikari-sakura". The stem alone is not unique: `waylandsessions`
+    /// and the x11 equivalent each take a list of directories, so the same stem
+    /// can appear in two of them, and the same stem can appear under two
+    /// different session types -- a `hikari.desktop` in both the Wayland and
+    /// the X11 directories would otherwise be indistinguishable here, and
+    /// restoring the wrong one starts the wrong kind of session. Neither a type
+    /// tag nor a path component can contain '/', so the first one separates the
+    /// two parts unambiguously.
+    ///
+    /// A value with no '/' is a bare stem written by an earlier build and is
+    /// matched on the stem alone.
     ///
     /// `session_index` alone cannot do that. It is an offset into a list whose
     /// composition is decided at startup -- which entries are installed, and
@@ -19,8 +32,8 @@ const User = struct {
     ///
     /// Owned by this entry whenever `allocated_username` is set, which is the
     /// case for every entry read from the save file; that reader is the only
-    /// thing that produces a name, and it dupes both strings together.
-    session_name: ?[]const u8 = null,
+    /// thing that produces a key, and it dupes both strings together.
+    session_key: ?[]const u8 = null,
 };
 
 user_list: std.ArrayList(User),
@@ -37,7 +50,7 @@ pub fn deinit(self: *SavedUsers, allocator: std.mem.Allocator) void {
     for (self.user_list.items) |user| {
         if (user.allocated_username) {
             allocator.free(user.username);
-            if (user.session_name) |session_name| allocator.free(session_name);
+            if (user.session_key) |session_key| allocator.free(session_key);
         }
     }
 

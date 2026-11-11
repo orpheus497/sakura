@@ -1298,7 +1298,10 @@ hikari-sakura's readme:
   Mount the `tmpfs` on the **parent** and let `pam_xdg` create the per-user
   directory inside it. The mount point has to exist before `fstab` is read, and
   nothing creates it for you — `pam_xdg` would, but not before the mount is
-  attempted — so make it once first:
+  attempted. Getting this wrong is not a quiet failure:
+  `/etc/rc.d/mountcritlocal` runs `mount -a`, retries once after the root mount
+  hold, and on a second failure prints `startup aborted` and calls `stop_boot`.
+  So make it first:
 
   ```sh
   sudo mkdir -p /var/run/xdg && sudo chmod 711 /var/run/xdg

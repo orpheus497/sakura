@@ -392,20 +392,20 @@ pub fn main(init: std.process.Init) !void {
 
             const session_index = std.fmt.parseInt(usize, session_index_str, 10) catch continue;
 
-            // Action purpose: Read the session name, which newer save files
+            // Action purpose: Read the session key, which newer save files
             // carry as a third field. rest() rather than next() because a
             // desktop file name is allowed to contain a colon, and taking the
-            // remainder of the line keeps such a name in one piece. A file
-            // written by an older version simply has nothing here, which is why
-            // the index is still read and still used as the fallback.
-            const session_name = user.rest();
+            // remainder of the line keeps the key in one piece. A file written
+            // by an older version simply has nothing here, which is why the
+            // index is still read and still used as the fallback.
+            const session_key = user.rest();
 
             try state.saved_users.user_list.append(state.allocator, .{
                 .username = try state.allocator.dupe(u8, username),
                 .session_index = session_index,
                 .first_run = false,
                 .allocated_username = true,
-                .session_name = if (session_name.len > 0) try state.allocator.dupe(u8, session_name) else null,
+                .session_key = if (session_key.len > 0) try state.allocator.dupe(u8, session_key) else null,
             });
         }
     }
@@ -936,15 +936,15 @@ pub fn main(init: std.process.Init) !void {
     // the index read from the file remains the fallback for an entry that has
     // no name, or whose name no longer matches anything installed.
     for (state.saved_users.user_list.items) |*user| {
-        const session_name = user.session_name orelse continue;
-        if (findSessionByFileName(&state.session, session_name)) |index| {
+        const session_key = user.session_key orelse continue;
+        if (findSavedSession(&state.session, session_key)) |index| {
             user.session_index = index;
         } else {
             try state.log_file.info(
                 state.io,
                 "conf",
                 "saved session '{s}' for user '{s}' is not in the session list; falling back to the saved position",
-                .{ session_name, user.username },
+                .{ session_key, user.username },
             );
         }
     }
@@ -1776,13 +1776,13 @@ fn authenticate(ptr: *anyopaque) !bool {
         } else {
             try writer.print("{d}\n", .{state.login.?.label.current});
         }
-        // Action purpose: Write the session's name as a third field, so the
-        // next run can restore the selection by identity rather than by
-        // position. The name comes from the live list, which is what the index
-        // currently refers to; for an index outside it, whatever name was read
-        // at startup is carried through unchanged rather than invented.
+        // Action purpose: Write the session's identity as a third field, so the
+        // next run can restore the selection by it rather than by position. It
+        // comes from the live list, which is what the index currently refers
+        // to; for an index outside it, whatever key was read at startup is
+        // carried through unchanged rather than invented.
         //
-        // Only crawled entries get a name. The shell and xinitrc pseudo-entries
+        // Only crawled entries get a key. The shell and xinitrc pseudo-entries
         // have no desktop file, so their file_name is empty, and the only other
         // identity they have is a translated label that would stop matching the
         // moment the user changed language. They are also added before the
@@ -1790,17 +1790,21 @@ fn authenticate(ptr: *anyopaque) !bool {
         // cannot shift -- so for exactly those entries the index is already the
         // stable identifier, and it is left to do the job alone.
         for (state.saved_users.user_list.items) |user| {
-            const session_name: ?[]const u8 = name: {
+            var key_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+            const session_key: ?[]const u8 = key: {
                 if (user.session_index < state.session.label.list.items.len) {
-                    const file_name = state.session.label.list.items[user.session_index].environment.file_name;
-                    if (file_name.len > 0) break :name file_name;
-                    break :name null;
+                    const environment = state.session.label.list.items[user.session_index].environment;
+                    if (environment.file_name.len == 0) break :key null;
+                    break :key std.fmt.bufPrint(&key_buffer, "{s}/{s}", .{
+                        @tagName(environment.display_server),
+                        environment.file_name,
+                    }) catch break :key null;
                 }
-                break :name user.session_name;
+                break :key user.session_key;
             };
 
-            if (session_name) |name| {
-                try writer.print("{s}:{d}:{s}\n", .{ user.username, user.session_index, name });
+            if (session_key) |key| {
+                try writer.print("{s}:{d}:{s}\n", .{ user.username, user.session_index, key });
             } else {
                 try writer.print("{s}:{d}\n", .{ user.username, user.session_index });
             }
@@ -2911,31 +2915,44 @@ fn clampSessionIndex(session: *Session, index: usize) usize {
     return @min(index, session.label.list.items.len - 1);
 }
 
-// Function purpose: Find a session by the exact desktop file name stem, and by
-// nothing else.
+// Function purpose: Resolve a saved session key -- see SavedUsers.User for the
+// format -- to a position in the current session list.
 //
 // Deliberately not findSessionByName, which is for names a person typed into
 // `auto_session` and so matches generously: file_name, Name, the first
 // DesktopNames entry, and the whole DesktopNames string, case-insensitively,
 // returning the first entry that matches on any of them. That is right for
-// configuration and wrong here. The saved name is written from file_name, so
-// loose matching only creates ways for it to land on a different entry -- one
-// whose Name happens to equal another's file name, say -- which is the exact
-// failure the name was added to prevent.
+// configuration and wrong here. The key is written from file_name and the
+// session type, so loose matching only creates ways for it to land on a
+// different entry -- one whose Name happens to equal another's file name, say
+// -- which is the failure the key was added to prevent.
 //
-// Exact and case-sensitive, because the value came from a directory entry and
-// file names on these systems are too.
-fn findSessionByFileName(session: *Session, file_name: []const u8) ?usize {
-    // Action purpose: An empty name matches nothing. The shell and xinitrc
+// Matching is exact and case-sensitive, because the stem came from a directory
+// entry and file names on these systems are too.
+fn findSavedSession(session: *Session, key: []const u8) ?usize {
+    // Action purpose: An empty key matches nothing. The shell and xinitrc
     // pseudo-entries have no desktop file and so carry an empty file_name, and
     // an empty needle would otherwise select whichever of them comes first.
-    // Nothing writes an empty name, and the reader turns an empty third field
+    // Nothing writes an empty key, and the reader turns an empty third field
     // into null, so this is a guard rather than a path -- but a silent wrong
     // selection is not worth leaving to those two facts holding forever.
-    if (file_name.len == 0) return null;
+    if (key.len == 0) return null;
+
+    // Action purpose: Split the type tag from the stem. A key with no '/' is a
+    // bare stem from an earlier build; a tag this build does not recognise is
+    // treated the same way, matching on the stem alone rather than refusing.
+    const separator = std.mem.indexOfScalar(u8, key, '/');
+    const wanted_server: ?DisplayServer = if (separator) |at|
+        std.meta.stringToEnum(DisplayServer, key[0..at])
+    else
+        null;
+    const wanted_stem = if (separator) |at| key[at + 1 ..] else key;
+    if (wanted_stem.len == 0) return null;
 
     for (session.label.list.items, 0..) |env, i| {
-        if (std.mem.eql(u8, env.environment.file_name, file_name)) return i;
+        if (!std.mem.eql(u8, env.environment.file_name, wanted_stem)) continue;
+        if (wanted_server) |server| if (env.environment.display_server != server) continue;
+        return i;
     }
     return null;
 }
@@ -3183,10 +3200,14 @@ test "a save record with a long session name survives the read buffer" {
     @memset(&user_bytes, 'a');
     const long_user: []const u8 = &user_bytes;
 
+    // The key as the writer forms it: a type tag, '/', then the stem.
+    const session_key = try std.fmt.allocPrint(allocator, "wayland/{s}", .{long_name});
+    defer allocator.free(session_key);
+
     const record = try std.fmt.allocPrint(
         allocator,
         "{s}:{d}:{s}",
-        .{ long_user, std.math.maxInt(usize), long_name },
+        .{ long_user, std.math.maxInt(usize), session_key },
     );
     defer allocator.free(record);
 
@@ -3195,19 +3216,25 @@ test "a save record with a long session name survives the read buffer" {
     // Action purpose: Read it back through the same call the save reader uses,
     // over the record plus a second line, so that a buffer too small to hold
     // the first would be caught here instead of silently dropping the second.
-    const contents = try std.fmt.allocPrint(allocator, "{s}\nbob:0:other\n", .{record});
+    const contents = try std.fmt.allocPrint(allocator, "{s}\nbob:0:x11/other\n", .{record});
     defer allocator.free(contents);
 
     var fixed: std.Io.Reader = .fixed(contents);
     const first = (try fixed.takeDelimiter('\n')).?;
     try std.testing.expectEqualStrings(record, first);
     const second = (try fixed.takeDelimiter('\n')).?;
-    try std.testing.expectEqualStrings("bob:0:other", second);
+    try std.testing.expectEqualStrings("bob:0:x11/other", second);
 
     // Action purpose: And that it still splits into the three fields, with the
-    // name taken as the remainder so an embedded colon cannot cut it short.
+    // key taken as the remainder so an embedded colon cannot cut it short.
     var fields = std.mem.splitScalar(u8, first, ':');
     try std.testing.expectEqualStrings(long_user, fields.next().?);
     try std.testing.expectEqual(std.math.maxInt(usize), try std.fmt.parseInt(usize, fields.next().?, 10));
-    try std.testing.expectEqualStrings(long_name, fields.rest());
+    try std.testing.expectEqualStrings(session_key, fields.rest());
+
+    // Action purpose: And that the key itself splits back into the type tag and
+    // the stem at its first '/', which is how findSavedSession reads it.
+    const separator = std.mem.indexOfScalar(u8, session_key, '/').?;
+    try std.testing.expectEqual(DisplayServer.wayland, std.meta.stringToEnum(DisplayServer, session_key[0..separator]).?);
+    try std.testing.expectEqualStrings(long_name, session_key[separator + 1 ..]);
 }
