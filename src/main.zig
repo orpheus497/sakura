@@ -41,6 +41,16 @@ const OldSave = @import("config/OldSave.zig");
 const SavedUsers = @import("config/SavedUsers.zig");
 const custom = @import("config/custom.zig");
 const DisplayServer = @import("enums.zig").DisplayServer;
+
+// Constant purpose: The read bound for one save-file record. takeDelimiter
+// fails rather than truncating when a line does not fit, and that failure
+// clears save_file_intact and abandons every later user's remembered session,
+// so this has to clear the longest record the writer below can emit: a login
+// name (MAXLOGNAME is 33 on FreeBSD), a usize in decimal (20 digits), two
+// separators, a display-server tag and a desktop file name stem (NAME_MAX,
+// 255) -- roughly 310 bytes. Named rather than written in place so the test
+// covering it checks this value instead of a copy of it.
+const save_record_max_len = 1024;
 const Environment = @import("Environment.zig");
 const Entry = Environment.Entry;
 
@@ -332,7 +342,7 @@ pub fn main(init: std.process.Init) !void {
         // separators and a desktop file name stem (NAME_MAX, 255), so roughly
         // 310 bytes; 1 KiB clears that with room to spare and still bounds the
         // read.
-        var file_buffer: [1024]u8 = undefined;
+        var file_buffer: [save_record_max_len]u8 = undefined;
         var file_reader = save_file.reader(state.io, &file_buffer);
         var reader = &file_reader.interface;
 
@@ -3201,8 +3211,9 @@ test "a save record with a long session name survives the read buffer" {
     // separators and a desktop file name stem at NAME_MAX.
     const allocator = std.testing.allocator;
 
-    // The same size the save reader in main() uses.
-    const read_buffer_len = 1024;
+    // The bound the save reader in main() actually uses, not a copy of it, so
+    // that lowering it there fails this test.
+    const read_buffer_len = save_record_max_len;
 
     var name_bytes: [255]u8 = undefined;
     @memset(&name_bytes, 'x');
