@@ -79,40 +79,91 @@ jobs:
       # Package names are not interchangeable between distributions, so each job
       # names its own. PAM headers need installing here, where FreeBSD has them
       # in the base system.
-      # Action purpose: retry the package step instead of failing the job on a
-      # package-mirror outage. The hosted runner resolves its archives through
-      # azure.archive.ubuntu.com, and when that name stops resolving apt exits
-      # 100 from `Unable to fetch some archives` before setup-zig has run --
-      # so the job reports a build failure without ever invoking the compiler.
-      # That happened three times in a row on three different commits while
-      # the FreeBSD, Arch and Fedora jobs passed on the same trees, which is
-      # what distinguishes it from a real failure.
+      # Action purpose: install the build dependencies, surviving the hosted
+      # runner's package mirror being unreachable.
       #
-      # The apt timeouts are shortened deliberately. apt's own DNS retries
-      # make a single failing attempt take minutes, so without trimming them
-      # four attempts would run longer than the rest of the workflow put
-      # together.
+      # The runner dereferences its sources through /etc/apt/apt-mirrors.txt,
+      # which points at azure.archive.ubuntu.com. When that name stops
+      # resolving, apt exits 100 from `Unable to fetch some archives` before
+      # setup-zig has run, so the job reports a build failure without ever
+      # invoking the compiler. It happened on four consecutive commits while
+      # the FreeBSD, Arch and Fedora jobs passed on the same trees.
       #
-      # This hardens the job against a transient outage. It cannot rescue a
-      # sustained one: if the mirror is down for longer than these attempts
-      # span, the job still fails -- correctly, since the dependencies really
-      # are unavailable. The final `exit 1` keeps that honest rather than
-      # letting a half-installed toolchain reach `zig build`.
+      # Resolution is checked before apt runs, because a dead mirror is slow
+      # rather than quick to fail: apt resolves once per package URL and waits
+      # about twenty seconds each time, so one doomed pass costs ten minutes.
+      # Acquire::*::Timeout does not help -- those bound connection and data
+      # transfer, not name resolution. Checking first turns ten minutes of
+      # waiting into one getent call, and rewriting the mirror file redirects
+      # every fetch without touching the deb822 sources.
+      #
+      # Everything here is guarded so a runner image that arranges apt
+      # differently is left alone and simply takes the plain path. The closing
+      # `exit 1` is deliberate: a job that cannot install its dependencies has
+      # to fail rather than reach `zig build` with half a toolchain.
       - name: Install build dependencies
         run: |
           set -eu
-          apt_opts='-o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20'
-          for attempt in 1 2 3 4; do
-            if sudo apt-get $apt_opts update \
-               && sudo apt-get $apt_opts install -y --no-install-recommends \
-                  libpam0g-dev libxcb1-dev pkgconf build-essential; then
-              exit 0
+
+          packages='libpam0g-dev libxcb1-dev pkgconf build-essential'
+          mirrors=/etc/apt/apt-mirrors.txt
+
+          install_deps() {
+            sudo apt-get update \
+              && sudo apt-get install -y --no-install-recommends $packages
+          }
+
+          # Action purpose: drop mirror entries whose host does not resolve,
+          # keeping the ones that do. Pruning rather than testing for a
+          # survivor is the point: in the observed failure archive.ubuntu.com
+          # resolved perfectly well and only azure.archive.ubuntu.com did not,
+          # so a check that passed when any host resolved would have left apt
+          # to discover the dead entry itself, one slow lookup per package URL.
+          #
+          # A line carrying no URL host, such as a comment, is kept untouched.
+          # If nothing is left, the canonical archive is written in, because an
+          # empty mirror file would fail in a far more confusing way.
+          prune_mirrors() {
+            [ -f "$mirrors" ] || return 0
+
+            kept=$(mktemp)
+            dropped=0
+            while IFS= read -r line; do
+              host=$(printf '%s\n' "$line" | awk -F/ 'NF>2 { print $3 }')
+              if [ -z "$host" ] || getent hosts "$host" >/dev/null 2>&1; then
+                printf '%s\n' "$line" >>"$kept"
+              else
+                echo "::warning::apt mirror $host does not resolve; dropping it" >&2
+                dropped=$((dropped + 1))
+              fi
+            done <"$mirrors"
+
+            if [ "$dropped" -eq 0 ]; then
+              rm -f "$kept"
+              return 0
             fi
-            echo "::warning::apt attempt $attempt failed" >&2
-            # No sleep after the last attempt: nothing follows it to wait for.
-            if [ "$attempt" -lt 4 ]; then sleep $((attempt * 15)); fi
-          done
-          echo "::error::package installation failed after 4 attempts" >&2
+
+            if [ -s "$kept" ]; then
+              sudo cp "$kept" "$mirrors"
+            else
+              echo "::warning::no configured apt mirror resolves; using archive.ubuntu.com" >&2
+              printf '%s\n' 'http://archive.ubuntu.com/ubuntu/' | sudo tee "$mirrors" >/dev/null
+            fi
+            rm -f "$kept"
+          }
+
+          prune_mirrors
+
+          if install_deps; then exit 0; fi
+
+          # A single retry, for a genuinely transient failure. More than one is
+          # not worth it here: the slow case is a mirror that cannot be
+          # resolved, and that is already handled above.
+          echo "::warning::apt failed; retrying once" >&2
+          sleep 15
+          if install_deps; then exit 0; fi
+
+          echo "::error::could not install build dependencies" >&2
           exit 1
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
