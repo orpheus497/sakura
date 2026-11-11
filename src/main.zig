@@ -323,7 +323,16 @@ pub fn main(init: std.process.Init) !void {
         var save_file = std.Io.Dir.cwd().openFile(state.io, state.save_path, .{}) catch break :read_save_file;
         defer save_file.close(state.io);
 
-        var file_buffer: [256]u8 = undefined;
+        // Action purpose: 1 KiB, not the 256 bytes this used to be. A record is
+        // now "username:index:session_name", and takeDelimiter below fails
+        // rather than truncating when a line does not fit the buffer -- which
+        // sets save_file_intact and abandons every later user's remembered
+        // session. The worst case a writer here can emit is a login name
+        // (MAXLOGNAME is 33 on FreeBSD), a usize in decimal (20 digits), two
+        // separators and a desktop file name stem (NAME_MAX, 255), so roughly
+        // 310 bytes; 1 KiB clears that with room to spare and still bounds the
+        // read.
+        var file_buffer: [1024]u8 = undefined;
         var file_reader = save_file.reader(state.io, &file_buffer);
         var reader = &file_reader.interface;
 
@@ -928,7 +937,7 @@ pub fn main(init: std.process.Init) !void {
     // no name, or whose name no longer matches anything installed.
     for (state.saved_users.user_list.items) |*user| {
         const session_name = user.session_name orelse continue;
-        if (findSessionByName(&state.session, session_name)) |index| {
+        if (findSessionByFileName(&state.session, session_name)) |index| {
             user.session_index = index;
         } else {
             try state.log_file.info(
@@ -2902,6 +2911,35 @@ fn clampSessionIndex(session: *Session, index: usize) usize {
     return @min(index, session.label.list.items.len - 1);
 }
 
+// Function purpose: Find a session by the exact desktop file name stem, and by
+// nothing else.
+//
+// Deliberately not findSessionByName, which is for names a person typed into
+// `auto_session` and so matches generously: file_name, Name, the first
+// DesktopNames entry, and the whole DesktopNames string, case-insensitively,
+// returning the first entry that matches on any of them. That is right for
+// configuration and wrong here. The saved name is written from file_name, so
+// loose matching only creates ways for it to land on a different entry -- one
+// whose Name happens to equal another's file name, say -- which is the exact
+// failure the name was added to prevent.
+//
+// Exact and case-sensitive, because the value came from a directory entry and
+// file names on these systems are too.
+fn findSessionByFileName(session: *Session, file_name: []const u8) ?usize {
+    // Action purpose: An empty name matches nothing. The shell and xinitrc
+    // pseudo-entries have no desktop file and so carry an empty file_name, and
+    // an empty needle would otherwise select whichever of them comes first.
+    // Nothing writes an empty name, and the reader turns an empty third field
+    // into null, so this is a guard rather than a path -- but a silent wrong
+    // selection is not worth leaving to those two facts holding forever.
+    if (file_name.len == 0) return null;
+
+    for (session.label.list.items, 0..) |env, i| {
+        if (std.mem.eql(u8, env.environment.file_name, file_name)) return i;
+    }
+    return null;
+}
+
 fn findSessionByName(session: *Session, name: []const u8) ?usize {
     for (session.label.list.items, 0..) |env, i| {
         if (std.ascii.eqlIgnoreCase(env.environment.file_name, name)) return i;
@@ -3123,4 +3161,53 @@ test "the shipped hikari-sakura entries parse as expected" {
     try std.testing.expectEqualStrings("Hikari Sakura", binary.Name);
     try std.testing.expectEqualStrings("dbus-run-session /usr/local/bin/hikari", binary.Exec);
     try std.testing.expectEqualStrings("Sakura", binary.DesktopNames.?);
+}
+
+test "a save record with a long session name survives the read buffer" {
+    // Test purpose: The save file gained a third field, the session name, and
+    // the reader fails a line that does not fit its buffer rather than
+    // truncating it -- which would abandon every later user's remembered
+    // session. This pins the buffer against the longest record a writer here
+    // can produce: the worst case is a login name, a usize in decimal, two
+    // separators and a desktop file name stem at NAME_MAX.
+    const allocator = std.testing.allocator;
+
+    // The same size the save reader in main() uses.
+    const read_buffer_len = 1024;
+
+    var name_bytes: [255]u8 = undefined;
+    @memset(&name_bytes, 'x');
+    const long_name: []const u8 = &name_bytes;
+
+    var user_bytes: [33]u8 = undefined;
+    @memset(&user_bytes, 'a');
+    const long_user: []const u8 = &user_bytes;
+
+    const record = try std.fmt.allocPrint(
+        allocator,
+        "{s}:{d}:{s}",
+        .{ long_user, std.math.maxInt(usize), long_name },
+    );
+    defer allocator.free(record);
+
+    try std.testing.expect(record.len < read_buffer_len);
+
+    // Action purpose: Read it back through the same call the save reader uses,
+    // over the record plus a second line, so that a buffer too small to hold
+    // the first would be caught here instead of silently dropping the second.
+    const contents = try std.fmt.allocPrint(allocator, "{s}\nbob:0:other\n", .{record});
+    defer allocator.free(contents);
+
+    var fixed: std.Io.Reader = .fixed(contents);
+    const first = (try fixed.takeDelimiter('\n')).?;
+    try std.testing.expectEqualStrings(record, first);
+    const second = (try fixed.takeDelimiter('\n')).?;
+    try std.testing.expectEqualStrings("bob:0:other", second);
+
+    // Action purpose: And that it still splits into the three fields, with the
+    // name taken as the remainder so an embedded colon cannot cut it short.
+    var fields = std.mem.splitScalar(u8, first, ':');
+    try std.testing.expectEqualStrings(long_user, fields.next().?);
+    try std.testing.expectEqual(std.math.maxInt(usize), try std.fmt.parseInt(usize, fields.next().?, 10));
+    try std.testing.expectEqualStrings(long_name, fields.rest());
 }

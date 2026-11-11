@@ -598,17 +598,24 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
 /// it is private from the instant it exists and a symlink planted at the path
 /// by another account is refused rather than followed.
 ///
-/// The path is a regular file left behind by an earlier session. Its inode is
-/// deliberately NOT reused. A chmod after opening is not sufficient: POSIX
-/// checks permissions at open(2) and never again, so any process that already
-/// holds the old file open -- it was mode 0644 before this was fixed -- keeps
-/// reading through that descriptor no matter what the mode becomes afterwards,
-/// and would be handed this session's output. Instead a fresh 0600 file is
-/// created alongside and renamed onto the path. rename(2) is atomic, so there
-/// is no instant at which the live log is readable by others, and any such
-/// descriptor is stranded on the old inode, which from then on receives
-/// nothing. No history is lost by this, because opening the log always
-/// truncated it.
+/// The path is a regular file that is already exactly mode 0600. It is reused
+/// as it stands. Nobody else could ever have opened it, so there is no stale
+/// descriptor to escape, and reusing it keeps two properties the replacement
+/// below would cost: concurrent sessions for one user share the inode instead
+/// of unlinking each other's reachable log, and a log provisioned by an
+/// administrator in a directory the user cannot write still opens.
+///
+/// The path is a regular file at any other mode. Its inode is deliberately NOT
+/// reused. A chmod after opening is not sufficient: POSIX checks permissions at
+/// open(2) and never again, so any process that already holds the old file open
+/// -- it was mode 0644 before this was fixed -- keeps reading through that
+/// descriptor no matter what the mode becomes afterwards, and would be handed
+/// this session's output. Instead a fresh 0600 file is created alongside and
+/// renamed onto the path. rename(2) is atomic, so there is no instant at which
+/// the live log is readable by others, and any such descriptor is stranded on
+/// the old inode, which from then on receives nothing. No history is lost by
+/// this, because opening the log always truncated it. Since the result is 0600,
+/// the case above handles every later session, so this runs once per log.
 ///
 /// The path is anything else: a device, a fifo, a socket, or a symlink to one.
 /// It is opened as given and its mode is left strictly alone.
@@ -628,31 +635,60 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
     // false so that a symlink is reported as a symlink rather than as whatever
     // it points at -- the decision below turns on what sits at this path, not
     // on what it leads to.
-    const existing_kind: ?std.Io.File.Kind = kind: {
+    const existing: ?std.Io.File.Stat = stat: {
         const stat = cwd.statFile(io, session_log, .{ .follow_symlinks = false }) catch |err| switch (err) {
-            error.FileNotFound => break :kind null,
+            error.FileNotFound => break :stat null,
             else => {
                 try global_log_file.err(io, "auth/sys", "failed to stat session log file: {s}", .{@errorName(err)});
                 return err;
             },
         };
-        break :kind stat.kind;
+        break :stat stat;
     };
 
-    // Action purpose: Not a regular file. Open it and change nothing about it.
-    if (existing_kind) |kind| if (kind != .file) {
-        const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
-            try global_log_file.err(io, "auth/sys", "failed to open session log file: {s}", .{@errorName(err)});
-            return err;
-        };
-        try global_log_file.info(
-            io,
-            "auth/sys",
-            "session log '{s}' is a {s}, not a regular file; opening it as-is and leaving its permissions alone",
-            .{ session_log, @tagName(kind) },
-        );
-        return file;
-    };
+    if (existing) |stat| {
+        // Action purpose: Not a regular file. Open it and change nothing.
+        if (stat.kind != .file) {
+            const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
+                try global_log_file.err(io, "auth/sys", "failed to open session log file: {s}", .{@errorName(err)});
+                return err;
+            };
+            try global_log_file.info(
+                io,
+                "auth/sys",
+                "session log '{s}' is a {s}, not a regular file; opening it as-is and leaving its permissions alone",
+                .{ session_log, @tagName(stat.kind) },
+            );
+            return file;
+        }
+
+        // Action purpose: A regular file that is already exactly mode 0600 is
+        // reused as it stands -- no staging, no rename, no chmod.
+        //
+        // Replacing the inode is worth doing only to escape one that another
+        // process may already hold open from when it was readable. A file that
+        // is already 0600 was never readable by anyone else, so there is no
+        // such descriptor to escape and nothing for the replacement to buy.
+        //
+        // Reusing it also avoids two costs the replacement carries. Two
+        // sessions for the same user starting at once would each rename their
+        // own staging file onto this path, and the second would unlink the
+        // first's: that session would go on writing to an inode no longer
+        // reachable by name, so its log would be lost. And staging needs write
+        // permission on the containing directory, which a log provisioned by an
+        // administrator in a directory the user cannot write does not have.
+        // Neither arises on this path.
+        //
+        // Replacement therefore happens exactly once per log that was created
+        // before this was fixed, and not afterwards.
+        if (stat.permissions.toMode() & 0o7777 == 0o600) {
+            const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
+                try global_log_file.err(io, "auth/sys", "failed to open the existing session log file: {s}", .{@errorName(err)});
+                return err;
+            };
+            return file;
+        }
+    }
 
     // Action purpose: The caller asked to reuse an existing log rather than
     // produce one. Replacing it would be creating a file, which is precisely
@@ -690,7 +726,20 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         .exclusive = true,
         .permissions = .fromMode(0o600),
     }) catch |err| {
-        try global_log_file.err(io, "auth/sys", "failed to create session log file: {s}", .{@errorName(err)});
+        // Action purpose: Say what is actually required. This is reached only
+        // for a log that is not already 0600, so the staging file has to be
+        // created beside it, and that needs write permission on the directory.
+        // A bare "AccessDenied" here would send the reader looking at the log's
+        // own mode, which is not the problem.
+        switch (err) {
+            error.AccessDenied, error.PermissionDenied => try global_log_file.err(
+                io,
+                "auth/sys",
+                "cannot make the session log private: '{s}' is not mode 0600, and replacing it needs write permission on the directory holding it, which this user does not have. Make that directory writable, or pre-create the log owned by this user at mode 0600, or set session_log = null",
+                .{session_log},
+            ),
+            else => try global_log_file.err(io, "auth/sys", "failed to create session log file: {s}", .{@errorName(err)}),
+        }
         return err;
     };
 

@@ -1296,15 +1296,31 @@ hikari-sakura's readme:
   Sakura it is `pam_xdg`'s `/var/run/xdg/$USER`, which is in the root dataset on
   a stock ZFS-root install, so backing `/tmp` with `tmpfs` does nothing for it.
   Mount the `tmpfs` on the **parent** and let `pam_xdg` create the per-user
-  directory inside it:
+  directory inside it. The mount point has to exist before `fstab` is read, and
+  nothing creates it for you — `pam_xdg` would, but not before the mount is
+  attempted — so make it once first:
+
+  ```sh
+  sudo mkdir -p /var/run/xdg && sudo chmod 711 /var/run/xdg
+  ```
 
   ```
   tmpfs /var/run/xdg tmpfs rw,mode=711 0 0
   ```
 
-  Do *not* mount it on `/var/run/xdg/$USER` itself. If that directory already
-  exists, `pam_xdg` requires it to be owned by the user's uid *and* gid and to
-  be exactly mode `0700`, and fails the session with `PAM_SESSION_ERR`
+  Once is enough on a normal install: `/etc/rc.d/cleanvar` purges `/var/run` at
+  boot but deletes only files and sockets (`-type f -or -type s`), so the
+  directory survives. It is *not* enough if `/var/run` is itself volatile —
+  `varmfs="YES"`, or `/var` on `tmpfs` — because then it is rebuilt each boot
+  from `/etc/mtree/BSD.var.dist`, which has no `xdg` entry, and the `fstab`
+  mount fails every time. In that configuration you do not want this `fstab`
+  line at all: `/var/run` is already memory-backed, `posix_fallocate` works
+  there, and `pam_xdg` creates `/var/run/xdg` itself at mode `0711`. Check with
+  `df -T /var/run` before changing anything.
+
+  Do *not* mount the `tmpfs` on `/var/run/xdg/$USER` itself. If that directory
+  already exists, `pam_xdg` requires it to be owned by the user's uid *and* gid
+  and to be exactly mode `0700`, and fails the session with `PAM_SESSION_ERR`
   otherwise — so a mount point left owned by `root` refuses the login outright.
   Correcting the ownership is still not enough: when the user's last session
   ends the module removes that directory with `unlinkat(..., AT_REMOVEDIR)`,
