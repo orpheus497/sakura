@@ -1316,8 +1316,8 @@ hikari-sakura's readme:
   directory survives.
 
   **If `/var/run` is itself volatile** — `varmfs="YES"`, or `/var` on
-  `tmpfs` — do not use this `fstab` line at all. It cannot do anything useful there, for
-  two reasons that both come from ordering: `/etc/rc.d/var` declares
+  `tmpfs` — do not use this `fstab` line at all. It cannot do anything useful
+  there, for two reasons that both come from ordering: `/etc/rc.d/var` declares
   `REQUIRE: mountcritlocal`, so it runs *after* the `fstab` mounts. The `mount
   -a` therefore sees the underlying `/var`, so whether it succeeds depends on
   whether the mount point happens to exist there — and if it does succeed, the
