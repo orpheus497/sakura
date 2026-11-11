@@ -581,6 +581,34 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
     return error.CmdExecveFailed;
 }
 
+// Function purpose: Empty a reused session log, as creating a fresh one would.
+//
+// std.Io.Dir.openFile has no truncate option -- OpenFileOptions carries only
+// `mode` and `allow_directory` -- while createFile truncates by default. So
+// every path below that reuses an existing descriptor instead of creating one
+// has to do this explicitly, or the session would write from offset 0 into a
+// file that still holds a previous session's bytes and leave whatever was
+// longer than the new output dangling past the end of it. The result would be
+// one file holding two sessions spliced together, which is worse than either.
+//
+// Only a regular file is truncated. The descriptor is fstat'ed rather than
+// trusting the earlier path stat, because that one did not follow symlinks and
+// this has to know what the link leads to. ftruncate on a character device
+// fails with EINVAL, so `session_log = /dev/null` would start failing logins
+// again without this check.
+fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, session_log: []const u8) !void {
+    const stat = file.stat(io) catch |err| {
+        try global_log_file.err(io, "auth/sys", "failed to stat the opened session log file: {s}", .{@errorName(err)});
+        return err;
+    };
+    if (stat.kind != .file) return;
+
+    file.setLength(io, 0) catch |err| {
+        try global_log_file.err(io, "auth/sys", "failed to empty the session log '{s}': {s}", .{ session_log, @errorName(err) });
+        return err;
+    };
+}
+
 /// Opens the configured session log and hands back a descriptor whose contents
 /// only the owning user can read.
 ///
@@ -682,6 +710,15 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
                 "session log '{s}' is a {s}, not a regular file; opening it as-is and leaving its permissions alone",
                 .{ session_log, @tagName(stat.kind) },
             );
+
+            // Action purpose: Only when producing a log, matching what creating
+            // one would have done. A caller that asked to reuse an existing log
+            // is asking for its contents to stay.
+            if (create) truncateReusedLog(global_log_file, io, file, session_log) catch |err| {
+                file.close(io);
+                return err;
+            };
+
             return file;
         }
     }
@@ -749,6 +786,11 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
                         "reusing the existing session log '{s}' at mode 0600: its directory is not writable, so it cannot be replaced with a fresh file. Whether anything still holds it open from before it became 0600 cannot be determined here",
                         .{session_log},
                     );
+                    truncateReusedLog(global_log_file, io, reused, session_log) catch |trunc_err| {
+                        reused.close(io);
+                        return trunc_err;
+                    };
+
                     reused_existing = true;
                     break :reuse reused;
                 }
