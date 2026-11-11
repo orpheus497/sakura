@@ -115,10 +115,12 @@ jobs:
 
           # Action purpose: drop mirror entries whose host does not resolve,
           # keeping the ones that do. Pruning rather than testing for a
-          # survivor is the point: in the observed failure archive.ubuntu.com
-          # resolved perfectly well and only azure.archive.ubuntu.com did not,
-          # so a check that passed when any host resolved would have left apt
-          # to discover the dead entry itself, one slow lookup per package URL.
+          # survivor is the point: a single dead entry among working ones has
+          # to be removed, not merely detected, or apt rediscovers it itself
+          # at one slow lookup per package URL. (In the outage that prompted
+          # this, every entry turned out to be dead -- but that is the case
+          # handled below, and it was wrongly assumed to be azure alone until
+          # the pruning output proved otherwise.)
           #
           # A line carrying no URL host, such as a comment, is kept untouched.
           # If nothing is left, the canonical archive is written in, because an
@@ -143,12 +145,27 @@ jobs:
               return 0
             fi
 
-            if [ -s "$kept" ]; then
-              sudo cp "$kept" "$mirrors"
-            else
-              echo "::warning::no configured apt mirror resolves; using archive.ubuntu.com" >&2
-              printf '%s\n' 'http://archive.ubuntu.com/ubuntu/' | sudo tee "$mirrors" >/dev/null
+            if [ ! -s "$kept" ]; then
+              # Action purpose: stop here rather than hand apt a name already
+              # shown to be dead. The first version of this wrote
+              # archive.ubuntu.com in at this point, which the loop above had
+              # just tested and dropped, so apt spent sixteen minutes
+              # rediscovering it. Nothing can be installed when no mirror
+              # resolves, and failing in one minute says so far better than
+              # failing in sixteen.
+              #
+              # getent consults the same resolver apt does, so this is not a
+              # guess about apt's behaviour. In the run that prompted this,
+              # packages.microsoft.com resolved and fetched normally while all
+              # three Ubuntu hosts did not, which is what identifies the fault
+              # as name resolution for those hosts rather than a bad mirror
+              # choice -- and therefore as something no rewrite here can fix.
+              rm -f "$kept"
+              echo "::error::no apt mirror resolves on this runner; the Ubuntu archives are unreachable, so the build dependencies cannot be installed" >&2
+              exit 1
             fi
+
+            sudo cp "$kept" "$mirrors"
             rm -f "$kept"
           }
 
