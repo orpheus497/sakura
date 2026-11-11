@@ -1313,13 +1313,23 @@ hikari-sakura's readme:
 
   Once is enough on a normal install: `/etc/rc.d/cleanvar` purges `/var/run` at
   boot but deletes only files and sockets (`-type f -or -type s`), so the
-  directory survives. It is *not* enough if `/var/run` is itself volatile —
-  `varmfs="YES"`, or `/var` on `tmpfs` — because then it is rebuilt each boot
-  from `/etc/mtree/BSD.var.dist`, which has no `xdg` entry, and the `fstab`
-  mount fails every time. In that configuration you do not want this `fstab`
-  line at all: `/var/run` is already memory-backed, `posix_fallocate` works
-  there, and `pam_xdg` creates `/var/run/xdg` itself at mode `0711`. Check with
-  `df -T /var/run` before changing anything.
+  directory survives.
+
+  **If `/var/run` is itself volatile** — `varmfs="YES"`, or `/var` on
+  `tmpfs` — do not use this `fstab` line at all. It cannot do anything useful there, for
+  two reasons that both come from ordering: `/etc/rc.d/var` declares
+  `REQUIRE: mountcritlocal`, so it runs *after* the `fstab` mounts. The `mount
+  -a` therefore sees the underlying `/var`, so whether it succeeds depends on
+  whether the mount point happens to exist there — and if it does succeed, the
+  memory-backed `/var` is mounted over it moments later and hides it. Nothing is
+  gained either way, and the failing case aborts the boot.
+
+  You do not need it in that configuration anyway: `/var/run` is already
+  memory-backed, so `posix_fallocate` works, and `pam_xdg` creates
+  `/var/run/xdg` itself at mode `0711` when the first session opens. (It is not
+  recreated from `/etc/mtree/BSD.var.dist`, which has no `xdg` entry, so
+  `pam_xdg` is what puts it back each boot.) Check with `df -T /var/run` before
+  changing anything.
 
   Do *not* mount the `tmpfs` on `/var/run/xdg/$USER` itself. If that directory
   already exists, `pam_xdg` requires it to be owned by the user's uid *and* gid
