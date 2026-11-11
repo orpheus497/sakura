@@ -937,16 +937,28 @@ pub fn main(init: std.process.Init) !void {
     // no name, or whose name no longer matches anything installed.
     for (state.saved_users.user_list.items) |*user| {
         const session_key = user.session_key orelse continue;
-        if (findSavedSession(&state.session, session_key)) |index| {
+        if (findSavedSession(state.session.label.list.items, session_key)) |index| {
             user.session_index = index;
-        } else {
-            try state.log_file.info(
-                state.io,
-                "conf",
-                "saved session '{s}' for user '{s}' is not in the session list; falling back to the saved position",
-                .{ session_key, user.username },
-            );
+            continue;
         }
+
+        // Action purpose: The key was written by a build that records one, and
+        // it matches nothing installed -- so that session is gone. The saved
+        // index is then not a weaker answer, it is a meaningless one: it points
+        // at whatever now occupies that position, which is some other session
+        // the user never chose. Fall back to the first entry and say so.
+        //
+        // A record with no key at all is left alone by the `orelse continue`
+        // above, because there the index is the only information in the file
+        // and is usually still right. Discarding it would lose the remembered
+        // session of everyone upgrading from a build that wrote no key.
+        try state.log_file.info(
+            state.io,
+            "conf",
+            "saved session '{s}' for user '{s}' is not installed; selecting the first session instead of the saved position, which now refers to a different one",
+            .{ session_key, user.username },
+        );
+        user.session_index = 0;
     }
 
     // Action purpose: Report having nothing to log into, in the same shape as
@@ -2929,7 +2941,7 @@ fn clampSessionIndex(session: *Session, index: usize) usize {
 //
 // Matching is exact and case-sensitive, because the stem came from a directory
 // entry and file names on these systems are too.
-fn findSavedSession(session: *Session, key: []const u8) ?usize {
+fn findSavedSession(items: anytype, key: []const u8) ?usize {
     // Action purpose: An empty key matches nothing. The shell and xinitrc
     // pseudo-entries have no desktop file and so carry an empty file_name, and
     // an empty needle would otherwise select whichever of them comes first.
@@ -2949,9 +2961,9 @@ fn findSavedSession(session: *Session, key: []const u8) ?usize {
     const wanted_stem = if (separator) |at| key[at + 1 ..] else key;
     if (wanted_stem.len == 0) return null;
 
-    for (session.label.list.items, 0..) |env, i| {
-        if (!std.mem.eql(u8, env.environment.file_name, wanted_stem)) continue;
-        if (wanted_server) |server| if (env.environment.display_server != server) continue;
+    for (items, 0..) |item, i| {
+        if (!std.mem.eql(u8, item.environment.file_name, wanted_stem)) continue;
+        if (wanted_server) |server| if (item.environment.display_server != server) continue;
         return i;
     }
     return null;
@@ -3237,4 +3249,49 @@ test "a save record with a long session name survives the read buffer" {
     const separator = std.mem.indexOfScalar(u8, session_key, '/').?;
     try std.testing.expectEqual(DisplayServer.wayland, std.meta.stringToEnum(DisplayServer, session_key[0..separator]).?);
     try std.testing.expectEqualStrings(long_name, session_key[separator + 1 ..]);
+}
+
+test "a saved session key is matched by type and stem, with explicit fallbacks" {
+    // Test purpose: The saved key identifies a session across restarts, so each
+    // way it can fail to identify one has to behave deliberately rather than
+    // land on whatever entry happens to be first.
+    const Item = struct { environment: Environment };
+
+    // Two entries sharing a stem across session types -- a hikari.desktop
+    // installed in both the Wayland and the X11 directories -- plus a shell
+    // pseudo-entry, which has no desktop file and so an empty stem.
+    const items = [_]Item{
+        .{ .environment = .{ .file_name = "", .display_server = .shell } },
+        .{ .environment = .{ .file_name = "hikari", .display_server = .wayland } },
+        .{ .environment = .{ .file_name = "hikari", .display_server = .x11 } },
+        .{ .environment = .{ .file_name = "hikari-sakura", .display_server = .wayland } },
+    };
+
+    // The type tag is what separates the two hikari entries.
+    try std.testing.expectEqual(@as(?usize, 1), findSavedSession(&items, "wayland/hikari"));
+    try std.testing.expectEqual(@as(?usize, 2), findSavedSession(&items, "x11/hikari"));
+    try std.testing.expectEqual(@as(?usize, 3), findSavedSession(&items, "wayland/hikari-sakura"));
+
+    // A key written by an older build carries no tag, so it matches on the stem
+    // alone and takes the first of the two -- the pre-existing behaviour, not a
+    // regression, and the reason the tag was added.
+    try std.testing.expectEqual(@as(?usize, 1), findSavedSession(&items, "hikari"));
+
+    // A tag this build does not know degrades to the same stem-only match
+    // rather than refusing outright.
+    try std.testing.expectEqual(@as(?usize, 1), findSavedSession(&items, "mir/hikari"));
+
+    // A stem that is not installed matches nothing, which is what makes the
+    // caller fall back explicitly instead of trusting the saved index.
+    try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, "wayland/gone"));
+    try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, "gone"));
+
+    // The right stem under the wrong type is still a miss.
+    try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, "x11/hikari-sakura"));
+
+    // An empty key, and a key whose stem half is empty, match nothing -- they
+    // must not select the shell pseudo-entry at index 0 by virtue of its empty
+    // file_name.
+    try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, ""));
+    try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, "wayland/"));
 }

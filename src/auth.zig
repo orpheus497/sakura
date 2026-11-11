@@ -594,9 +594,18 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
 /// Three situations have to be told apart, because the correct handling of each
 /// is different and doing the wrong one is worse than doing nothing.
 ///
-/// The path does not exist yet. Create it with O_CREAT|O_EXCL at mode 0600, so
-/// it is private from the instant it exists and a symlink planted at the path
-/// by another account is refused rather than followed.
+/// The path does not exist yet. A fresh file is created with O_CREAT|O_EXCL at
+/// mode 0600 under a staging name and renamed into place, so it is private from
+/// the instant it exists.
+///
+/// Note what O_EXCL does and does not cover here: it guards the *staging* name,
+/// so nothing planted there is opened or followed. The destination is installed
+/// by rename(2), which replaces whatever sits at that path rather than failing,
+/// so something appearing there between the stat above and the rename is simply
+/// replaced. That is still safe for the thing that matters -- no session output
+/// ever travels through a planted symlink, because every write goes to the
+/// descriptor from the exclusive create -- but it is not O_EXCL doing it, and
+/// the path is not reserved in the interval.
 ///
 /// The path is a regular file that is already exactly mode 0600. It is reused
 /// as it stands. Nobody else could ever have opened it, so there is no stale
