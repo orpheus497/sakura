@@ -1248,23 +1248,29 @@ Both declare `DesktopNames=Sakura`, so either way Sakura exports
 `XDG_CURRENT_DESKTOP=Sakura` and the desktop is reported under one name. Note
 that the longer label is *not* the wrapper — it is the barer of the two.
 
-**Either works.** On FreeBSD 15 `pam_xdg` supplies `XDG_RUNTIME_DIR` and Sakura
-passes it on, so the compositor has what it needs by the time either entry runs.
-Pick whichever you like.
+**Both start a working session.** On FreeBSD 15 `pam_xdg` supplies
+`XDG_RUNTIME_DIR` and Sakura passes it on, so the compositor has what it needs
+by the time either entry runs.
 
-The difference, if you want one: `start-hikari` creates a runtime directory when
-nothing else did, checks it is owned by you and mode `0700`, warns if it sits on
-ZFS, clears any `WAYLAND_DISPLAY` or `DISPLAY` leaked in from the parent, and
-wraps the compositor in `dbus-run-session` only when no session bus is already
-running. The `Hikari Sakura` entry does none of those checks and takes the
-environment as given — with one exception, which runs the other way. Its `Exec`
-line is `dbus-run-session hikari` with no condition on it, so it always starts a
-*fresh* session bus and replaces `DBUS_SESSION_BUS_ADDRESS`, even when the login
-path already provided one. Anything registered on the earlier bus is then
-invisible to the session, because it is a different bus. Those
-are belt-and-braces checks here, not requirements — they matter when something
-other than Sakura starts the session, or when the runtime directory is on ZFS and
-you want to be told.
+`start-hikari` creates a runtime directory when nothing else did, checks it is
+owned by you and mode `0700`, warns if it sits on ZFS, and clears any
+`WAYLAND_DISPLAY` or `DISPLAY` leaked in from the parent. The `Hikari Sakura`
+entry does none of those checks and takes the environment as given. Under Sakura
+these are belt-and-braces checks rather than requirements — they matter when
+something other than Sakura starts the session, or when the runtime directory is
+on ZFS and you want to be told.
+
+One difference is not a check, and runs the other way. Both entries arrange a
+session message bus, but not on the same terms. `start-hikari` wraps the
+compositor in `dbus-run-session` only when no bus is already running, and
+otherwise keeps the one it was handed. The `Hikari Sakura` entry's `Exec` line
+is `dbus-run-session hikari` with no condition on it, so it always starts a
+*fresh*
+bus and replaces `DBUS_SESSION_BUS_ADDRESS`, even when the login path already
+provided one — leaving anything registered on the earlier bus invisible to the
+session, because it is a different bus. If nothing in your login path sets up a
+bus you care about, this makes no difference and either entry is fine; if
+something does, pick **Hikari**.
 
 Two FreeBSD-specific things have to be right before any Wayland session will
 work, and neither is Sakura's to fix — they are documented in full in
