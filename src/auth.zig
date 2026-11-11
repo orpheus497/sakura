@@ -693,9 +693,12 @@ fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, s
 /// normal user, which would abort an otherwise fine login; for a root login it
 /// would succeed, leaving /dev/null at mode 0600 and breaking every other
 /// process on the machine. Nothing is stored in objects like these, so there is
-/// nothing to protect. The corollary, stated plainly because it is a choice and
-/// not an oversight: a log reached through a symlink does not get the 0600
-/// guarantee. Whoever pointed it somewhere else owns the mode of that path.
+/// nothing to protect. Two corollaries, stated plainly because they are choices
+/// and not oversights. A log reached through a symlink gets neither guarantee
+/// this function otherwise provides: not the 0600 mode, since the link's target
+/// is left exactly as it is, and not the fresh inode, since the link is
+/// followed and the target truncated in place rather than replaced. Whoever
+/// pointed the log somewhere else owns both properties of that path.
 fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) !?std.Io.File {
     const cwd = std.Io.Dir.cwd();
 
