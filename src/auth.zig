@@ -659,14 +659,23 @@ fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, s
 /// replacing, because opening the log always truncated it.
 ///
 /// The directory holding the log cannot be written, so no staging file can be
-/// made beside it and the replacement is impossible. Who could have put the
-/// existing file there decides what happens: since the user cannot write that
-/// directory, neither they nor any other unprivileged account could have
-/// created or replaced the file in it, so only root could have, and root can
-/// read the log whatever its mode. An existing regular file already at exactly
-/// 0600 is therefore reused -- with a log line saying its history cannot be
-/// established here -- and anything else is refused, because there is no way to
-/// make it private.
+/// made beside it and the replacement is impossible. This returns null: no
+/// redirection happens, the session's streams are left pointing wherever they
+/// already pointed, and the login proceeds. Nothing is written, so nothing can
+/// leak.
+///
+/// Reusing the file that is there would be wrong even at mode 0600, and the
+/// argument for reuse is worth refuting explicitly because it is easy to make.
+/// Not being able to write the directory does establish that no unprivileged
+/// account put the file there -- only root could have. But that is a fact about
+/// who created it, not about what mode it has ever carried. Root may have
+/// created it 0644 under a default umask, any local account could have opened
+/// it for reading while it was, and a later chmod to 0600 neither closes that
+/// descriptor nor leaves any trace of having happened. Provenance is not
+/// history.
+///
+/// Refusing the login instead is the other option and is worse: it denies
+/// service to protect output that does not have to be written at all.
 ///
 /// The path is anything else: a device, a fifo, a socket, or a symlink to one.
 /// It is opened as given and its mode is left strictly alone.
@@ -679,7 +688,7 @@ fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, s
 /// nothing to protect. The corollary, stated plainly because it is a choice and
 /// not an oversight: a log reached through a symlink does not get the 0600
 /// guarantee. Whoever pointed it somewhere else owns the mode of that path.
-fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) !std.Io.File {
+fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) !?std.Io.File {
     const cwd = std.Io.Dir.cwd();
 
     // Action purpose: Classify the path before touching it. follow_symlinks is
@@ -755,67 +764,46 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         return err;
     };
 
-    // Action purpose: Set when the fallback below reuses the existing file, so
-    // that the rename of a staging file that was never created is skipped.
-    var reused_existing = false;
-
     const file = cwd.createFile(io, staging_path, .{
         .exclusive = true,
         .permissions = .fromMode(0o600),
     }) catch |err| switch (err) {
         // Action purpose: The directory cannot be written, so no fresh inode
         // can be made beside the log and the replacement above is impossible.
-        // What is left depends on who could have put the existing file there.
+        // Give up on logging rather than write the session's output anywhere
+        // whose exposure is unknown, and return null so the caller leaves the
+        // streams alone and the login still proceeds.
         //
-        // Because the user cannot write this directory, they could not have
-        // created or replaced the file in it either, and neither could any
-        // other unprivileged account: only root could. Its history is
-        // therefore root's to vouch for, and root can read the log whatever
-        // its mode. So an existing file already at exactly 0600 is reused, and
-        // anything else is refused -- there is no way to make it private.
-        error.AccessDenied, error.PermissionDenied => reuse: {
-            if (existing) |stat| {
-                if (stat.kind == .file and stat.permissions.toMode() & 0o7777 == 0o600) {
-                    const reused = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |open_err| {
-                        try global_log_file.err(io, "auth/sys", "failed to open the existing session log file: {s}", .{@errorName(open_err)});
-                        return open_err;
-                    };
-                    try global_log_file.info(
-                        io,
-                        "auth/sys",
-                        "reusing the existing session log '{s}' at mode 0600: its directory is not writable, so it cannot be replaced with a fresh file. Whether anything still holds it open from before it became 0600 cannot be determined here",
-                        .{session_log},
-                    );
-                    truncateReusedLog(global_log_file, io, reused, session_log) catch |trunc_err| {
-                        reused.close(io);
-                        return trunc_err;
-                    };
-
-                    reused_existing = true;
-                    break :reuse reused;
-                }
-            }
-
-            // Action purpose: Say what is actually required. A bare
-            // "AccessDenied" would send the reader looking at the log's own
-            // mode, which is not where the problem is.
+        // Reusing the existing file instead would be wrong even when it is
+        // already mode 0600, and the reason is worth keeping written down
+        // because it is easy to argue past. Not being able to write the
+        // directory does say that no unprivileged account placed the file
+        // there, only root -- but that is a fact about who created it, not
+        // about what mode it has ever had. Root may well have created it 0644
+        // under a default umask, any local account could have opened it for
+        // reading while it was, and a later chmod to 0600 neither closes that
+        // descriptor nor leaves any trace. The mode says nothing about the
+        // past here any more than it does anywhere else.
+        //
+        // Refusing the login outright would be the other option, and is worse:
+        // it denies service to protect data that simply does not have to be
+        // written. Not redirecting writes nothing, leaks nothing, and leaves
+        // the session working, which is also what `session_log = null` already
+        // does by choice.
+        error.AccessDenied, error.PermissionDenied => {
             try global_log_file.err(
                 io,
                 "auth/sys",
-                "cannot make the session log private: replacing '{s}' needs write permission on the directory holding it, which this user does not have, and the existing path is not a regular file already at mode 0600. Make that directory writable, or pre-create the log owned by this user at mode 0600, or set session_log = null",
+                "cannot create a private session log: replacing '{s}' needs write permission on the directory holding it, which this user does not have, and an existing file there cannot be shown never to have been readable. Continuing without a session log. Make that directory writable to get one back, or set session_log = null to ask for this deliberately",
                 .{session_log},
             );
-            return err;
+            return null;
         },
         else => {
             try global_log_file.err(io, "auth/sys", "failed to create session log file: {s}", .{@errorName(err)});
             return err;
         },
     };
-
-    // Action purpose: Nothing further to do when the fallback above reused the
-    // existing file -- there is no staging file to install.
-    if (reused_existing) return file;
 
     // Action purpose: Move it onto the configured path. On failure the staging
     // file is removed rather than left behind, since nothing else will ever
@@ -830,7 +818,7 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
     return file;
 }
 
-fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) !std.Io.File {
+fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) !?std.Io.File {
     create_session_log_dir: {
         const session_log_dir = std.Io.Dir.path.dirname(session_log) orelse break :create_session_log_dir;
 
@@ -849,7 +837,12 @@ fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: [
 
     // Action purpose: Obtain the descriptor. All of the care about who can read
     // the result lives in openSessionLog, immediately above.
-    const log_file = try openSessionLog(global_log_file, io, session_log, create);
+    //
+    // null means it could not produce one that is private, and has said why.
+    // The streams are then left pointing where they already point and the
+    // session runs without a log, which is a state the configuration supports
+    // on purpose via `session_log = null`.
+    const log_file = (try openSessionLog(global_log_file, io, session_log, create)) orelse return null;
 
     // Action purpose: Send both of the session's streams to the log file, which
     // is what res/config.ini promises of it ("stdout and stderr of Wayland
