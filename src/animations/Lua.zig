@@ -75,7 +75,7 @@ pub fn init(
 
     file_loading: {
         const zf = std.mem.concatWithSentinel(alloc, u8, &[1][]const u8{file}, 0) catch |e| {
-            try self.log.err(self.io, "lua", "failed to allocate file path: {}", .{e});
+            self.log.err(self.io, "lua", "failed to allocate file path: {}", .{e});
             self.lua_str = "failed to allocate file path!";
             self.info_line.addMessage(lang.err_alloc, self.bg, self.fg) catch {};
             return e;
@@ -107,7 +107,7 @@ pub fn init(
         self.lua.doFile(zf) catch {
             const errorStr = self.lua.toString(-1) catch unreachable;
             self.lua_str = try self.allocator.dupeSentinel(u8, errorStr, 0);
-            try self.log.err(self.io, "lua", "lua error: {s}", .{errorStr});
+            self.log.err(self.io, "lua", "lua error: {s}", .{errorStr});
             self.lua_error = true;
             break :file_loading;
         };
@@ -150,7 +150,7 @@ fn draw(self: *Lua) void {
             &.{ "cannot call draw(): ", errorStr },
             0,
         ) catch unreachable;
-        self.log.err(self.io, "lua", "error (cannot call draw()): {s}", .{errorStr}) catch unreachable;
+        self.log.err(self.io, "lua", "error (cannot call draw()): {s}", .{errorStr});
         self.lua_error = true;
     };
 }

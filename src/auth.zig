@@ -44,11 +44,11 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     const pam_tty_str = try interop.ttyDeviceNameZ(&pam_tty_buffer, options.tty);
 
     // Set the XDG environment variables
-    try log_file.info(io, "auth/env", "setting xdg environment variables", .{});
+    log_file.info(io, "auth/env", "setting xdg environment variables", .{});
     try setXdgEnv(allocator, tty_str, current_environment);
 
     // Open the PAM session
-    try log_file.info(io, "auth/pam", "encoding credentials", .{});
+    log_file.info(io, "auth/pam", "encoding credentials", .{});
     const login_z = try allocator.dupeSentinel(u8, login, 0);
     defer allocator.free(login_z);
 
@@ -63,36 +63,36 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     };
     var handle: ?*interop.pam.pam_handle = undefined;
 
-    try log_file.info(io, "auth/pam", "starting session", .{});
+    log_file.info(io, "auth/pam", "starting session", .{});
     var status = interop.pam.pam_start(options.service_name, null, &conv, &handle);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
     defer _ = interop.pam.pam_end(handle, status);
 
     // Set PAM_TTY as the current TTY. This is required in case it isn't being set by another PAM module
-    try log_file.info(io, "auth/pam", "setting tty", .{});
+    log_file.info(io, "auth/pam", "setting tty", .{});
     status = interop.pam.pam_set_item(handle, interop.pam.PAM_TTY, pam_tty_str.ptr);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
 
     // Do the PAM routine
-    try log_file.info(io, "auth/pam", "authenticating", .{});
+    log_file.info(io, "auth/pam", "authenticating", .{});
     status = interop.pam.pam_authenticate(handle, 0);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
 
-    try log_file.info(io, "auth/pam", "validating account", .{});
+    log_file.info(io, "auth/pam", "validating account", .{});
     status = interop.pam.pam_acct_mgmt(handle, 0);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
 
-    try log_file.info(io, "auth/pam", "setting credentials", .{});
+    log_file.info(io, "auth/pam", "setting credentials", .{});
     status = interop.pam.pam_setcred(handle, interop.pam.PAM_ESTABLISH_CRED);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
     defer status = interop.pam.pam_setcred(handle, interop.pam.PAM_DELETE_CRED);
 
-    try log_file.info(io, "auth/pam", "opening session", .{});
+    log_file.info(io, "auth/pam", "opening session", .{});
     status = interop.pam.pam_open_session(handle, 0);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
     defer status = interop.pam.pam_close_session(handle, 0);
 
-    try log_file.info(io, "auth/passwd", "getting struct", .{});
+    log_file.info(io, "auth/passwd", "getting struct", .{});
     var user_entry: interop.UsernameEntry = undefined;
     {
         defer interop.closePasswordDatabase();
@@ -109,7 +109,7 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     // child below still has it on its stack for the whole of startSession(),
     // which is what finally passes the shell to execve().
     var user_shell_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    try log_file.info(io, "auth/passwd", "setting user shell", .{});
+    log_file.info(io, "auth/passwd", "setting user shell", .{});
     if (user_entry.shell == null) try interop.setUserShell(&user_entry, &user_shell_buffer);
 
     // chown & chmod stdin (which is the TTY)
@@ -125,7 +125,7 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     child_pid = std.posix.system.fork();
     if (child_pid == 0) {
         try log_file.reinit(io);
-        try log_file.info(io, "auth/sys", "starting session", .{});
+        log_file.info(io, "auth/sys", "starting session", .{});
 
         startSession(log_file, allocator, io, options, tty_str, user_entry, handle, current_environment) catch |e| {
             shared_err.writeError(e);
@@ -164,7 +164,7 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
 
     try log_file.reinit(io);
 
-    try log_file.info(io, "auth/utmp", "removing utmp entry", .{});
+    log_file.info(io, "auth/utmp", "removing utmp entry", .{});
     removeUtmpEntry(&entry);
 
     if (try shared_err.readError()) |err| return err;
@@ -181,15 +181,15 @@ fn startSession(
     current_environment: Environment,
 ) !void {
     // Set the user's GID & PID
-    try log_file.info(io, "auth/passwd", "setting user context", .{});
+    log_file.info(io, "auth/passwd", "setting user context", .{});
     try interop.setUserContext(allocator, user_entry);
 
     // Set up the environment
-    try log_file.info(io, "auth/env", "setting environment variables", .{});
+    log_file.info(io, "auth/env", "setting environment variables", .{});
     try initEnv(allocator, user_entry, options.path);
 
     // Reset the XDG environment variables
-    try log_file.info(io, "auth/env", "resetting xdg environment variables", .{});
+    log_file.info(io, "auth/env", "resetting xdg environment variables", .{});
     try setXdgEnv(allocator, tty_str, current_environment);
     try setXdgRuntimeDir(allocator, io);
 
@@ -201,7 +201,7 @@ fn startSession(
     for (env_list) |maybe_env_var| {
         if (maybe_env_var) |env_var| {
             const env_var_slice = std.mem.span(env_var);
-            try log_file.info(io, "auth/env", "setting pam environment variable: {s}", .{env_var_slice});
+            log_file.info(io, "auth/env", "setting pam environment variable: {s}", .{env_var_slice});
             try interop.putEnvironmentVariable(env_var_slice);
         }
     }
@@ -210,11 +210,11 @@ fn startSession(
     defer allocator.free(home_z);
 
     // Change to the user's home directory
-    try log_file.info(io, "auth/sys", "changing cwd to user home", .{});
+    log_file.info(io, "auth/sys", "changing cwd to user home", .{});
     if (std.posix.system.chdir(home_z.ptr) < 0) return error.ChangeDirectoryFailed;
 
     // Signal to the session process to give up control on the TTY
-    try log_file.info(io, "auth/sys", "releasing tty", .{});
+    log_file.info(io, "auth/sys", "releasing tty", .{});
     std.posix.kill(options.session_pid, std.posix.SIG.INT) catch return error.TtyControlTransferFailed;
 
     // Execute what the user requested
@@ -224,7 +224,7 @@ fn startSession(
             var vt_buf: [5]u8 = undefined;
             const vt = try std.fmt.bufPrint(&vt_buf, "vt{d}", .{options.x_vt orelse options.tty});
 
-            try log_file.info(io, "auth/x11", "setting vt to {s}", .{vt});
+            log_file.info(io, "auth/x11", "setting vt to {s}", .{vt});
             try executeX11Cmd(log_file, allocator, io, user_entry.shell.?, user_entry.home.?, options, current_environment.cmd orelse "", vt);
         },
     }
@@ -416,7 +416,7 @@ fn createXauthFile(log_file: *LogFile, io: std.Io, pwd: []const u8, buffer: []u8
 
     try std.Io.Dir.cwd().createDirPath(io, trimmed_xauth_dir);
 
-    try log_file.info(io, "auth/x11", "creating xauth file: {s}", .{xauthority});
+    log_file.info(io, "auth/x11", "creating xauth file: {s}", .{xauthority});
 
     const file = try std.Io.Dir.createFileAbsolute(io, xauthority, .{});
     file.close(io);
@@ -450,7 +450,7 @@ fn xauth(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, display_n
         var cmd_buffer: [1024]u8 = undefined;
         const cmd_str = std.fmt.bufPrintSentinel(&cmd_buffer, "{s} add {s} . {s}", .{ options.xauth_cmd, display_name, magic_cookie }, 0) catch std.process.exit(1);
 
-        try log_file.info(io, "auth/x11", "executing: {s} -c {s}", .{ shell, cmd_str });
+        log_file.info(io, "auth/x11", "executing: {s} -c {s}", .{ shell, cmd_str });
         const args = [_:null]?[*:0]const u8{ shell, "-c", cmd_str };
         _ = std.posix.system.execve(shell, &args, std.c.environ);
 
@@ -463,7 +463,7 @@ fn xauth(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, display_n
 
     try log_file.reinit(io);
     if (interop.isError(result) or status != 0) {
-        try log_file.err(
+        log_file.err(
             io,
             "auth/x11",
             "xauth command failed with status: {d}",
@@ -478,31 +478,31 @@ fn xauth(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, display_n
 fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, shell: []const u8, home: []const u8, options: AuthOptions, desktop_cmd: []const u8, vt: []const u8) !void {
     var xauth_buffer: [256]u8 = undefined;
 
-    try log_file.info(io, "auth/x11", "getting free display", .{});
+    log_file.info(io, "auth/x11", "getting free display", .{});
     const display_num = try getFreeDisplay();
     var buf: [4]u8 = undefined;
     const display_name = try std.fmt.bufPrint(&buf, ":{d}", .{display_num});
-    try log_file.info(io, "auth/x11", "got free display: {d}", .{display_num});
+    log_file.info(io, "auth/x11", "got free display: {d}", .{display_num});
 
     const shell_z = try allocator.dupeSentinel(u8, shell, 0);
     defer allocator.free(shell_z);
 
-    try log_file.info(io, "auth/x11", "creating xauth file", .{});
+    log_file.info(io, "auth/x11", "creating xauth file", .{});
     const xauthority = try xauth(log_file, allocator, io, display_name, shell_z, home, &xauth_buffer, options);
 
-    try log_file.info(io, "auth/x11", "starting x server", .{});
+    log_file.info(io, "auth/x11", "starting x server", .{});
     const pid = std.posix.system.fork();
     if (pid == 0) {
         var cmd_buffer: [1024]u8 = undefined;
         const cmd_str = std.fmt.bufPrintSentinel(&cmd_buffer, "{s} {s} {s} -auth {s}", .{ options.x_cmd, display_name, vt, xauthority }, 0) catch std.process.exit(1);
-        try log_file.info(io, "auth/x11", "executing: {s} -c {s} -auth {s}", .{ shell, cmd_str, xauthority });
+        log_file.info(io, "auth/x11", "executing: {s} -c {s} -auth {s}", .{ shell, cmd_str, xauthority });
 
         const args = [_:null]?[*:0]const u8{ shell_z, "-c", cmd_str };
         _ = std.posix.system.execve(shell_z, &args, std.c.environ);
         std.process.exit(1);
     }
 
-    try log_file.info(io, "auth/x11", "waiting for xcb connection", .{});
+    log_file.info(io, "auth/x11", "waiting for xcb connection", .{});
     var ok: c_int = -1;
     var xcb: ?*interop.xcb.xcb_connection_t = null;
     while (ok != 0) {
@@ -515,16 +515,16 @@ fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, s
 
     // X Server detaches from the process.
     // PID can be fetched from /tmp/X{d}.lock
-    try log_file.info(io, "auth/x11", "getting x server pid", .{});
+    log_file.info(io, "auth/x11", "getting x server pid", .{});
     const x_pid = try getXPid(io, display_num);
-    try log_file.info(io, "auth/x11", "got x server pid: {d}", .{x_pid});
+    log_file.info(io, "auth/x11", "got x server pid: {d}", .{x_pid});
 
-    try log_file.info(io, "auth/x11", "launching environment", .{});
+    log_file.info(io, "auth/x11", "launching environment", .{});
     xorg_pid = std.posix.system.fork();
     if (xorg_pid == 0) {
         var cmd_buffer: [1024]u8 = undefined;
         const cmd_str = std.fmt.bufPrintSentinel(&cmd_buffer, "{s} {s} {s}", .{ options.setup_cmd, options.login_cmd orelse "", desktop_cmd }, 0) catch std.process.exit(1);
-        try log_file.info(io, "auth/x11", "executing: {s} -c {s}", .{ shell, cmd_str });
+        log_file.info(io, "auth/x11", "executing: {s} -c {s}", .{ shell, cmd_str });
 
         const args = [_:null]?[*:0]const u8{ shell_z, "-c", cmd_str };
         _ = std.posix.system.execve(shell_z, &args, std.c.environ);
@@ -542,7 +542,7 @@ fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, s
     var xorg_status: c_int = undefined;
     _ = std.posix.system.waitpid(xorg_pid, &xorg_status, 0);
 
-    try log_file.info(io, "auth/x11", "disconnecting xcb", .{});
+    log_file.info(io, "auth/x11", "disconnecting xcb", .{});
     interop.xcb.xcb_disconnect(xcb);
 
     // TODO: Find a more robust way to ensure that X has been terminated (pidfds?)
@@ -555,7 +555,7 @@ fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, s
 }
 
 fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, shell: []const u8, options: AuthOptions, is_terminal: bool, exec_cmd: ?[]const u8) !void {
-    try global_log_file.info(io, "auth/sys", "launching wayland/shell/custom session", .{});
+    global_log_file.info(io, "auth/sys", "launching wayland/shell/custom session", .{});
 
     var maybe_log_file: ?std.Io.File = null;
     if (!is_terminal) {
@@ -563,7 +563,7 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
         // we redirect standard output & error or not. That is, we redirect only
         // if it's equal to false (so if it's not running in a TTY).
         if (options.session_log) |log_path| {
-            try global_log_file.info(io, "auth/sys", "setting up stdio & stderr redirection", .{});
+            global_log_file.info(io, "auth/sys", "setting up stdio & stderr redirection", .{});
             maybe_log_file = try redirectStandardStreams(global_log_file, io, log_path, true);
         }
     }
@@ -575,7 +575,7 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
     var cmd_buffer: [1024]u8 = undefined;
     const cmd_str = try std.fmt.bufPrintSentinel(&cmd_buffer, "{s} {s} {s}", .{ options.setup_cmd, options.login_cmd orelse "", exec_cmd orelse shell }, 0);
 
-    try global_log_file.info(io, "auth/sys", "executing: {s} -c {s}", .{ shell, cmd_str });
+    global_log_file.info(io, "auth/sys", "executing: {s} -c {s}", .{ shell, cmd_str });
     const args = [_:null]?[*:0]const u8{ shell_z, "-c", cmd_str };
     _ = std.posix.system.execve(shell_z, &args, std.c.environ);
     return error.CmdExecveFailed;
@@ -598,13 +598,13 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
 // again without this check.
 fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, session_log: []const u8) !void {
     const stat = file.stat(io) catch |err| {
-        try global_log_file.err(io, "auth/sys", "failed to stat the opened session log file: {s}", .{@errorName(err)});
+        global_log_file.err(io, "auth/sys", "failed to stat the opened session log file: {s}", .{@errorName(err)});
         return err;
     };
     if (stat.kind != .file) return;
 
     file.setLength(io, 0) catch |err| {
-        try global_log_file.err(io, "auth/sys", "failed to empty the session log '{s}': {s}", .{ session_log, @errorName(err) });
+        global_log_file.err(io, "auth/sys", "failed to empty the session log '{s}': {s}", .{ session_log, @errorName(err) });
         return err;
     };
 }
@@ -620,6 +620,18 @@ fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, s
 /// in place -- ends the same way: say so in the system log, return null, and let
 /// the session start with its streams untouched. Enumerating the errnos that
 /// deserve that treatment would only invite the next one to be missed.
+///
+/// The return type carries that promise rather than describing it. There is no
+/// error union, so the compiler, not this comment, is what guarantees a login
+/// cannot be denied by anything in here: a `try` added later will not build.
+///
+/// That hole is worth naming, because the words above were already here while
+/// it was open. Every acquisition failure did return null, but each one then
+/// reported itself with a `try`ed write to the system log -- and those writes
+/// could fail, on a full filesystem or on a message too long for the syslog
+/// buffer. So the login was denied not by the failure but by the attempt to
+/// describe it, which is the one outcome this contract exists to prevent.
+/// LogFile.info and LogFile.err now return void for exactly that reason.
 ///
 /// The one thing this must never do is hand back a descriptor it cannot
 /// vouch for. Degrading is always safe in that respect, because null means no
@@ -725,7 +737,7 @@ fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, s
 /// is left exactly as it is, and not the fresh inode, since the link is
 /// followed and the target truncated in place rather than replaced. Whoever
 /// pointed the log somewhere else owns both properties of that path.
-fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) !?std.Io.File {
+fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) ?std.Io.File {
     const cwd = std.Io.Dir.cwd();
 
     // Action purpose: Classify the path before touching it. follow_symlinks is
@@ -736,7 +748,7 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         const stat = cwd.statFile(io, session_log, .{ .follow_symlinks = false }) catch |err| switch (err) {
             error.FileNotFound => break :stat null,
             else => {
-                try global_log_file.err(io, "auth/sys", "cannot inspect the session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+                global_log_file.err(io, "auth/sys", "cannot inspect the session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
                 return null;
             },
         };
@@ -747,10 +759,10 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         // Action purpose: Not a regular file. Open it and change nothing.
         if (stat.kind != .file) {
             const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
-                try global_log_file.err(io, "auth/sys", "cannot open the session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+                global_log_file.err(io, "auth/sys", "cannot open the session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
                 return null;
             };
-            try global_log_file.info(
+            global_log_file.info(
                 io,
                 "auth/sys",
                 "session log '{s}' is a {s}, not a regular file; opening it as-is and leaving its permissions alone",
@@ -776,11 +788,11 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
     // above.
     if (!create) {
         const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
-            try global_log_file.err(io, "auth/sys", "cannot open the existing session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+            global_log_file.err(io, "auth/sys", "cannot open the existing session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
             return null;
         };
         file.setPermissions(io, .fromMode(0o600)) catch |err| {
-            try global_log_file.err(io, "auth/sys", "cannot restrict the session log '{s}' to mode 0600 ({s}); continuing without one rather than writing to it", .{ session_log, @errorName(err) });
+            global_log_file.err(io, "auth/sys", "cannot restrict the session log '{s}' to mode 0600 ({s}); continuing without one rather than writing to it", .{ session_log, @errorName(err) });
             file.close(io);
             return null;
         };
@@ -797,7 +809,7 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         "{s}.{d}.new",
         .{ session_log, std.c.getpid() },
     ) catch |err| {
-        try global_log_file.err(io, "auth/sys", "session log path '{s}' is too long to stage a replacement beside ({s}); continuing without a log", .{ session_log, @errorName(err) });
+        global_log_file.err(io, "auth/sys", "session log path '{s}' is too long to stage a replacement beside ({s}); continuing without a log", .{ session_log, @errorName(err) });
         return null;
     };
 
@@ -830,7 +842,7 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         // the session's output private: that output goes to the inherited
         // stdout and stderr, as unredirected output always has.
         error.AccessDenied, error.PermissionDenied => {
-            try global_log_file.err(
+            global_log_file.err(
                 io,
                 "auth/sys",
                 "cannot create a private session log: replacing '{s}' needs write permission on the directory holding it, which this user does not have, and an existing file there cannot be shown never to have been readable. Continuing without a session log. Make that directory writable to get one back, or set session_log = null to ask for this deliberately",
@@ -844,7 +856,7 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         // Enumerating them would only invite the next one to be missed, so the
         // whole class degrades the same way.
         else => {
-            try global_log_file.err(io, "auth/sys", "cannot create a private session log beside '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+            global_log_file.err(io, "auth/sys", "cannot create a private session log beside '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
             return null;
         },
     };
@@ -852,10 +864,18 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
     // Action purpose: Move it onto the configured path. On failure the staging
     // file is removed rather than left behind, since nothing else will ever
     // look at it.
+    //
+    // The descriptor is closed and the staging file unlinked before the
+    // diagnostic, so that releasing them depends on nothing above it. Logging
+    // can no longer fail, so this is no longer load-bearing -- it was, while
+    // err() returned an error union, because a failed diagnostic skipped both
+    // and stranded a 0600 file called <session_log>.<pid>.new in the user's
+    // home forever. Keeping the order makes the independence explicit rather
+    // than resting it on a property of another function.
     cwd.rename(staging_path, cwd, session_log, io) catch |err| {
-        try global_log_file.err(io, "auth/sys", "cannot put the new session log at '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
         file.close(io);
         cwd.deleteFile(io, staging_path) catch {};
+        global_log_file.err(io, "auth/sys", "cannot put the new session log at '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
         return null;
     };
 
@@ -868,13 +888,13 @@ fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: [
 
         var buffer = std.mem.zeroes([std.Io.Dir.max_path_bytes]u8);
         const len = std.Io.Dir.cwd().realPathFile(io, session_log_dir, &buffer) catch |err| {
-            try global_log_file.err(io, "auth/sys", "cannot resolve the session log directory '{s}' ({s}); continuing without a log", .{ session_log_dir, @errorName(err) });
+            global_log_file.err(io, "auth/sys", "cannot resolve the session log directory '{s}' ({s}); continuing without a log", .{ session_log_dir, @errorName(err) });
             return null;
         };
         const resolved_path = buffer[0..len];
 
         std.Io.Dir.cwd().createDirPath(io, resolved_path) catch |err| {
-            try global_log_file.err(io, "auth/sys", "cannot create the session log directory '{s}' ({s}); continuing without a log", .{ resolved_path, @errorName(err) });
+            global_log_file.err(io, "auth/sys", "cannot create the session log directory '{s}' ({s}); continuing without a log", .{ resolved_path, @errorName(err) });
             return null;
         };
     }
@@ -886,7 +906,7 @@ fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: [
     // The streams are then left pointing where they already point and the
     // session runs without a log, which is a state the configuration supports
     // on purpose via `session_log = null`.
-    const log_file = (try openSessionLog(global_log_file, io, session_log, create)) orelse return null;
+    const log_file = openSessionLog(global_log_file, io, session_log, create) orelse return null;
 
     // Action purpose: Send both of the session's streams to the log file, which
     // is what res/config.ini promises of it ("stdout and stderr of Wayland

@@ -7,6 +7,14 @@ pub const UidRange = @import("UidRange.zig");
 pub const LogFile = @import("LogFile.zig");
 pub const SharedError = @import("SharedError.zig");
 
+// Zig only registers tests from files it actually analyses, and a container-level
+// `pub const x = @import("f.zig")` is analysed lazily -- so without this the test
+// blocks in the files above are silently never run. refAllDecls references every
+// public declaration here, which forces each import and collects its tests.
+test {
+    @import("std").testing.refAllDecls(@This());
+}
+
 pub fn IniParser(comptime Struct: type) type {
     return struct {
         const Self = @This();

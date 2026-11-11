@@ -105,7 +105,7 @@ pub fn init(
     // Initialize termbox
     var err = termbox.tb_init();
     if (err != 0) {
-        try log_file.err(
+        log_file.err(
             io,
             "tui",
             "failed to initialise termbox2: {s}, term: {s}",
@@ -117,7 +117,7 @@ pub fn init(
     if (options.full_color) {
         err = termbox.tb_set_output_mode(termbox.TB_OUTPUT_256);
         if (err != 0) {
-            try log_file.err(
+            log_file.err(
                 io,
                 "tui",
                 "failed to set termbox2 output mode to 256 color: {s}",
@@ -126,7 +126,7 @@ pub fn init(
             return error.TermboxSetOutputModeFailed;
         }
         color_mode = .palette_256;
-        try log_file.info(
+        log_file.info(
             io,
             "tui",
             "termbox2 set to 256-color output mode",
@@ -134,7 +134,7 @@ pub fn init(
         );
     } else {
         color_mode = .eight;
-        try log_file.info(
+        log_file.info(
             io,
             "tui",
             "termbox2 set to eight-color output mode",
@@ -148,7 +148,7 @@ pub fn init(
     const width = getWidth();
     const height = getHeight();
 
-    try log_file.info(
+    log_file.info(
         io,
         "tui",
         "screen resolution is {d}x{d}",
@@ -252,7 +252,7 @@ pub fn runEventLoop(
             if (self.getActiveWidget()) |current_widget| {
                 current_widget.handle(null) catch |err| {
                     shared_error.writeError(error.SetCursorFailed);
-                    try self.log_file.err(
+                    self.log_file.err(
                         io,
                         "tui",
                         "failed to set cursor in active widget '{s}': {s}",
@@ -298,7 +298,7 @@ pub fn runEventLoop(
             self.width = TerminalBuffer.getWidth();
             self.height = TerminalBuffer.getHeight();
 
-            try self.log_file.info(
+            self.log_file.info(
                 io,
                 "tui",
                 "screen resolution updated to {d}x{d}",
@@ -309,7 +309,7 @@ pub fn runEventLoop(
                 for (layer) |widget| {
                     widget.realloc() catch |err| {
                         shared_error.writeError(error.WidgetReallocationFailed);
-                        try self.log_file.err(
+                        self.log_file.err(
                             io,
                             "tui",
                             "failed to reallocate widget '{s}': {s}",
@@ -333,7 +333,7 @@ pub fn runEventLoop(
                 for (keys.items) |key| {
                     current_widget.handle(key) catch |err| {
                         shared_error.writeError(error.CurrentWidgetHandlingFailed);
-                        try self.log_file.err(
+                        self.log_file.err(
                             io,
                             "tui",
                             "failed to handle active widget '{s}': {s}",
@@ -604,7 +604,7 @@ pub fn registerKeybind(
         .callback = callback,
         .context = context,
     }) catch |err| {
-        try self.log_file.err(
+        self.log_file.err(
             io,
             "tui",
             "failed to register keybind {s}: {s}",
@@ -742,7 +742,7 @@ fn parseKeybind(self: *TerminalBuffer, io: std.Io, keybind: []const u8) !keyboar
         }
 
         if (!found) {
-            try self.log_file.err(
+            self.log_file.err(
                 io,
                 "tui",
                 "failed to parse key {s} of keybind {s}",

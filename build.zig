@@ -234,6 +234,15 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_tests.step);
 
+    // Action purpose: cover the dependency modules too. b.addTest registers
+    // only the tests in the module it is given, so testing exe.root_module
+    // reached src/ and nothing else -- the test blocks under sakura-ui/src and
+    // sakura-core/src were compiled by no CI command. sakura-ui's own test step
+    // pulls in sakura-core's, so depending on it covers both.
+    if (sakura_ui.builder.top_level_steps.get("test")) |ui_tests| {
+        test_step.dependOn(&ui_tests.step);
+    }
+
     const installexe_step = b.step("installexe", "Install Sakura, its configuration and its getty wrapper");
     installexe_step.dependOn(&InstallStep(
         b,

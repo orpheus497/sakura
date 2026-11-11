@@ -443,7 +443,7 @@ pub fn main(init: std.process.Init) !void {
     // no info-line message: that would need a new `Lang` key, and D-011 settled
     // that adding one is not worth breaking the locale files' completeness for.
     if (!state.save_file_intact) {
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "conf",
             "save file could not be read to the end; leaving it untouched this run so a partial read is not written back over it",
@@ -467,7 +467,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // Initialize terminal buffer
-    try state.log_file.info(state.io, "tui", "initializing terminal buffer", .{});
+    state.log_file.info(state.io, "tui", "initializing terminal buffer", .{});
     var labels = [_][]const u8{
         state.lang.login,
         state.lang.password,
@@ -500,7 +500,7 @@ pub fn main(init: std.process.Init) !void {
         random,
     );
     defer {
-        state.log_file.info(state.io, "tui", "shutting down terminal buffer", .{}) catch {};
+        state.log_file.info(state.io, "tui", "shutting down terminal buffer", .{});
         state.buffer.deinit();
     }
 
@@ -702,7 +702,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "cli",
             "unable to parse argument '{s}{s}': {s}",
@@ -716,7 +716,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to execute start command: exit code {d}",
@@ -731,7 +731,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "conf",
             "unable to parse config file: {s}",
@@ -739,7 +739,7 @@ pub fn main(init: std.process.Init) !void {
         );
 
         for (config_parser.errors.items) |err| {
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "conf",
                 "failed to convert value '{s}' of option '{s}' to type '{s}': {s}",
@@ -754,7 +754,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to open log file",
@@ -768,7 +768,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to set numlock: {s}",
@@ -838,7 +838,7 @@ pub fn main(init: std.process.Init) !void {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "sys",
                 "failed to add shell environment: {s}",
@@ -855,7 +855,7 @@ pub fn main(init: std.process.Init) !void {
                     state.config.error_bg,
                     state.config.error_fg,
                 );
-                try state.log_file.err(
+                state.log_file.err(
                     state.io,
                     "sys",
                     "failed to add xinitrc environment: {s}",
@@ -869,7 +869,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.bg,
             state.config.fg,
         );
-        try state.log_file.info(
+        state.log_file.info(
             state.io,
             "comp",
             "x11 support disabled at compile-time",
@@ -885,7 +885,7 @@ pub fn main(init: std.process.Init) !void {
         while (wayland_session_dirs.next()) |dir| {
             const skipped = crawl(&state.session, state.io, &state.log_file, state.lang, dir, .wayland) catch |err| {
                 has_crawl_error = true;
-                try state.log_file.err(
+                state.log_file.err(
                     state.io,
                     "sys",
                     "failed to crawl wayland session directory '{s}': {s}",
@@ -903,7 +903,7 @@ pub fn main(init: std.process.Init) !void {
             while (x_session_dirs.next()) |dir| {
                 const skipped = crawl(&state.session, state.io, &state.log_file, state.lang, dir, .x11) catch |err| {
                     has_crawl_error = true;
-                    try state.log_file.err(
+                    state.log_file.err(
                         state.io,
                         "sys",
                         "failed to crawl x11 session directory '{s}': {s}",
@@ -920,7 +920,7 @@ pub fn main(init: std.process.Init) !void {
     while (custom_session_dirs.next()) |dir| {
         const skipped = crawl(&state.session, state.io, &state.log_file, state.lang, dir, .custom) catch |err| {
             has_crawl_error = true;
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "sys",
                 "failed to crawl custom session directory '{s}': {s}",
@@ -962,7 +962,7 @@ pub fn main(init: std.process.Init) !void {
         // above, because there the index is the only information in the file
         // and is usually still right. Discarding it would lose the remembered
         // session of everyone upgrading from a build that wrote no key.
-        try state.log_file.info(
+        state.log_file.info(
             state.io,
             "conf",
             "saved session '{s}' for user '{s}' is not installed; selecting the first session instead of the saved position, which now refers to a different one",
@@ -991,7 +991,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "no selectable session: every entry was absent, hidden (Hidden=true or NoDisplay=true), or unreadable, and no shell or x11 fallback is enabled",
@@ -1005,7 +1005,7 @@ pub fn main(init: std.process.Init) !void {
         // accounts *and* no root account...but at this point, if that's the
         // case, you have bigger problems to deal with in the first place. :D
         if (!state.config.type_username) try state.info_line.addMessage(state.lang.err_no_users, state.config.error_bg, state.config.error_fg);
-        try state.log_file.err(state.io, "sys", "no users found", .{});
+        state.log_file.err(state.io, "sys", "no users found", .{});
     }
 
     state.password_label = Label.init(
@@ -1045,7 +1045,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to lock password memory out of swap",
@@ -1096,7 +1096,7 @@ pub fn main(init: std.process.Init) !void {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "auth",
                 "autologin failed: username '{s}' not found",
@@ -1106,7 +1106,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         const session_index = findSessionByName(&state.session, auto_session) orelse {
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "auth",
                 "autologin failed: session '{s}' not found",
@@ -1119,7 +1119,7 @@ pub fn main(init: std.process.Init) !void {
             );
             break :check_autologin;
         };
-        try state.log_file.info(
+        state.log_file.info(
             state.io,
             "auth",
             "attempting autologin for user '{s}' with session '{s}'",
@@ -1148,7 +1148,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to get active tty: {s}",
@@ -1162,7 +1162,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to switch to tty {d}: {s}",
@@ -1279,7 +1279,7 @@ pub fn main(init: std.process.Init) !void {
                     state.config.error_bg,
                     state.config.error_fg,
                 );
-                try state.log_file.err(
+                state.log_file.err(
                     state.io,
                     "tui",
                     "failed to load the gif wallpaper: {s}",
@@ -1495,7 +1495,7 @@ pub fn main(init: std.process.Init) !void {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "sys",
                 "failed to get hostname: {s}",
@@ -1678,14 +1678,14 @@ fn customCommand(ptr: *anyopaque) !bool {
                 "sys",
                 "custom command '{s}' bound to {s} exited with code {d}",
                 .{ lbl.cmd.name, lbl.key, code },
-            ) catch {};
+            );
         },
         else => lbl.log_file.err(
             lbl.io,
             "sys",
             "custom command '{s}' bound to {s} did not exit normally",
             .{ lbl.cmd.name, lbl.key },
-        ) catch {},
+        ),
     }
     return false;
 }
@@ -1693,7 +1693,7 @@ fn customCommand(ptr: *anyopaque) !bool {
 fn authenticate(ptr: *anyopaque) !bool {
     var state: *UiState = @ptrCast(@alignCast(ptr));
 
-    try state.log_file.info(state.io, "auth", "starting authentication", .{});
+    state.log_file.info(state.io, "auth", "starting authentication", .{});
 
     // Action purpose: Stop before anything reads the current selection. The
     // forked child below does `list.items[label.current].environment`
@@ -1707,7 +1707,7 @@ fn authenticate(ptr: *anyopaque) !bool {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(state.io, "auth", "refusing to authenticate: no session is selectable", .{});
+        state.log_file.err(state.io, "auth", "refusing to authenticate: no session is selectable", .{});
         return false;
     }
 
@@ -1725,7 +1725,7 @@ fn authenticate(ptr: *anyopaque) !bool {
                     state.config.error_bg,
                     state.config.error_fg,
                 );
-                try state.log_file.err(
+                state.log_file.err(
                     state.io,
                     "tui",
                     "failed to clear info line: {s}",
@@ -1750,7 +1750,7 @@ fn authenticate(ptr: *anyopaque) !bool {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "tui",
                 "failed to clear info line: {s}",
@@ -1776,7 +1776,7 @@ fn authenticate(ptr: *anyopaque) !bool {
             "conf",
             "failed to save current user data",
             .{},
-        ) catch {};
+        );
 
         var file = std.Io.Dir.cwd().createFile(state.io, state.save_path, .{}) catch |err| {
             state.log_file.err(
@@ -1784,7 +1784,7 @@ fn authenticate(ptr: *anyopaque) !bool {
                 "sys",
                 "failed to create save file: {s}",
                 .{@errorName(err)},
-            ) catch break :save_last_settings;
+            );
             break :save_last_settings;
         };
         defer file.close(state.io);
@@ -1920,7 +1920,7 @@ fn authenticate(ptr: *anyopaque) !bool {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "auth",
             "failed to authenticate: {s}",
@@ -1943,7 +1943,7 @@ fn authenticate(ptr: *anyopaque) !bool {
             state.config.bg,
             state.config.fg,
         );
-        try state.log_file.info(state.io, "auth", "logged out", .{});
+        state.log_file.info(state.io, "auth", "logged out", .{});
     }
 
     if (state.config.auth_fails == 0 or state.auth_fails < state.config.auth_fails) {
@@ -1982,7 +1982,7 @@ fn decreaseBrightnessCmd(ptr: *anyopaque) !bool {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to decrease brightness: {s}",
@@ -2001,7 +2001,7 @@ fn increaseBrightnessCmd(ptr: *anyopaque) !bool {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to increase brightness: {s}",
@@ -2021,7 +2021,7 @@ fn updateNumlock(self: *Label, ptr: *anyopaque) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to get lock state for numlock: {s}",
@@ -2043,7 +2043,7 @@ fn updateCapslock(self: *Label, ptr: *anyopaque) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to get lock state for capslock: {s}",
@@ -2067,7 +2067,7 @@ fn updateBattery(self: *Label, ptr: *anyopaque) !void {
     if (battery_source) |source| {
         const battery_percentage = interop.getBatteryPercentage(source) catch |err| {
             self.update_fn = null;
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "sys",
                 "failed to get battery percentage: {s}",
@@ -2102,7 +2102,7 @@ fn updateClock(self: *Label, ptr: *anyopaque) !void {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "tui",
                 "clock string too long",
@@ -2220,7 +2220,7 @@ fn updateCustomInfo(lbl: *Label, ptr: *anyopaque) !void {
                     "sys",
                     "custom label '{s}' failed: {s}",
                     .{ i.info.name, @errorName(err) },
-                ) catch {};
+                );
             };
             // A refresh of 0 leaves the counter at 0, which is what makes the
             // command run exactly once.
@@ -2714,7 +2714,7 @@ fn handleInactivity(ptr: *anyopaque) !void {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "sys",
                 "failed to execute inactivity command: exit code {d}",
@@ -2849,16 +2849,16 @@ fn crawl(session: *Session, io: std.Io, log_file: *LogFile, lang: Lang, path: []
         // deinit() runs here rather than through the errdefer below, because
         // `continue` is not an error return and would not trigger it. The
         // errdefer is armed only after this point, so there is no path on which
-        // the arena is freed twice. The log write is deliberately not `try`d:
-        // failing to record a skipped entry is not a reason to drop the entries
-        // that parsed cleanly.
+        // the arena is freed twice. The log write cannot fail -- LogFile.err
+        // returns void by contract -- so failing to record a skipped entry can
+        // never drop the entries that parsed cleanly.
         const data = readEntryFile(session.label.allocator, io, &entry_ini, entry_path) catch |err| {
             log_file.err(
                 io,
                 "sys",
                 "skipping unreadable session entry '{s}': {s}",
                 .{ entry_path, @errorName(err) },
-            ) catch {};
+            );
             entry_ini.deinit();
             skipped += 1;
             continue;
