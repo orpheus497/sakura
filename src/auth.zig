@@ -610,7 +610,20 @@ fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, s
 }
 
 /// Opens the configured session log and hands back a descriptor whose contents
-/// only the owning user can read.
+/// only the owning user can read, or null if it cannot.
+///
+/// Null is not an error path, it is the other half of the contract: logging is
+/// auxiliary, so nothing here is worth failing a login over. Every reason this
+/// can fail -- the path cannot be inspected, the directory cannot be made or
+/// written, the filesystem or its inodes are full, a quota or resource limit is
+/// hit, an existing file cannot be made private, the replacement cannot be put
+/// in place -- ends the same way: say so in the system log, return null, and let
+/// the session start with its streams untouched. Enumerating the errnos that
+/// deserve that treatment would only invite the next one to be missed.
+///
+/// The one thing this must never do is hand back a descriptor it cannot
+/// vouch for. Degrading is always safe in that respect, because null means no
+/// redirection happens at all.
 ///
 /// The session's standard output *and* standard error are pointed at whatever
 /// this returns, so the file holds everything a session says when it goes
@@ -723,8 +736,8 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         const stat = cwd.statFile(io, session_log, .{ .follow_symlinks = false }) catch |err| switch (err) {
             error.FileNotFound => break :stat null,
             else => {
-                try global_log_file.err(io, "auth/sys", "failed to stat session log file: {s}", .{@errorName(err)});
-                return err;
+                try global_log_file.err(io, "auth/sys", "cannot inspect the session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+                return null;
             },
         };
         break :stat stat;
@@ -734,8 +747,8 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         // Action purpose: Not a regular file. Open it and change nothing.
         if (stat.kind != .file) {
             const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
-                try global_log_file.err(io, "auth/sys", "failed to open session log file: {s}", .{@errorName(err)});
-                return err;
+                try global_log_file.err(io, "auth/sys", "cannot open the session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+                return null;
             };
             try global_log_file.info(
                 io,
@@ -747,9 +760,9 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
             // Action purpose: Only when producing a log, matching what creating
             // one would have done. A caller that asked to reuse an existing log
             // is asking for its contents to stay.
-            if (create) truncateReusedLog(global_log_file, io, file, session_log) catch |err| {
+            if (create) truncateReusedLog(global_log_file, io, file, session_log) catch {
                 file.close(io);
-                return err;
+                return null;
             };
 
             return file;
@@ -763,13 +776,13 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
     // above.
     if (!create) {
         const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
-            try global_log_file.err(io, "auth/sys", "failed to open existing session log file: {s}", .{@errorName(err)});
-            return err;
+            try global_log_file.err(io, "auth/sys", "cannot open the existing session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+            return null;
         };
         file.setPermissions(io, .fromMode(0o600)) catch |err| {
-            try global_log_file.err(io, "auth/sys", "failed to restrict session log file permissions: {s}", .{@errorName(err)});
+            try global_log_file.err(io, "auth/sys", "cannot restrict the session log '{s}' to mode 0600 ({s}); continuing without one rather than writing to it", .{ session_log, @errorName(err) });
             file.close(io);
-            return err;
+            return null;
         };
         return file;
     }
@@ -784,8 +797,8 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         "{s}.{d}.new",
         .{ session_log, std.c.getpid() },
     ) catch |err| {
-        try global_log_file.err(io, "auth/sys", "session log path too long to stage a replacement: {s}", .{@errorName(err)});
-        return err;
+        try global_log_file.err(io, "auth/sys", "session log path '{s}' is too long to stage a replacement beside ({s}); continuing without a log", .{ session_log, @errorName(err) });
+        return null;
     };
 
     const file = cwd.createFile(io, staging_path, .{
@@ -825,9 +838,14 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
             );
             return null;
         },
+        // Action purpose: Anything else -- a full filesystem or exhausted
+        // inodes (NoSpaceLeft), a quota, a resource limit -- is the same
+        // situation wearing a different errno: no private log can be made here.
+        // Enumerating them would only invite the next one to be missed, so the
+        // whole class degrades the same way.
         else => {
-            try global_log_file.err(io, "auth/sys", "failed to create session log file: {s}", .{@errorName(err)});
-            return err;
+            try global_log_file.err(io, "auth/sys", "cannot create a private session log beside '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+            return null;
         },
     };
 
@@ -835,10 +853,10 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
     // file is removed rather than left behind, since nothing else will ever
     // look at it.
     cwd.rename(staging_path, cwd, session_log, io) catch |err| {
-        try global_log_file.err(io, "auth/sys", "failed to put the new session log in place: {s}", .{@errorName(err)});
+        try global_log_file.err(io, "auth/sys", "cannot put the new session log at '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
         file.close(io);
         cwd.deleteFile(io, staging_path) catch {};
-        return err;
+        return null;
     };
 
     return file;
@@ -850,14 +868,14 @@ fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: [
 
         var buffer = std.mem.zeroes([std.Io.Dir.max_path_bytes]u8);
         const len = std.Io.Dir.cwd().realPathFile(io, session_log_dir, &buffer) catch |err| {
-            try global_log_file.err(io, "auth/sys", "failed to resolve path for session log file directory: {s}", .{@errorName(err)});
-            return err;
+            try global_log_file.err(io, "auth/sys", "cannot resolve the session log directory '{s}' ({s}); continuing without a log", .{ session_log_dir, @errorName(err) });
+            return null;
         };
         const resolved_path = buffer[0..len];
 
         std.Io.Dir.cwd().createDirPath(io, resolved_path) catch |err| {
-            try global_log_file.err(io, "auth/sys", "failed to create session log file directory: {s}", .{@errorName(err)});
-            return err;
+            try global_log_file.err(io, "auth/sys", "cannot create the session log directory '{s}' ({s}); continuing without a log", .{ resolved_path, @errorName(err) });
+            return null;
         };
     }
 
@@ -886,6 +904,14 @@ fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: [
     // Both descriptors are pointed at the log file directly rather than
     // chained through one another, so neither line depends on the other having
     // run first.
+    // Action purpose: These two stay fatal, unlike every failure to obtain the
+    // log above, and the difference is not an oversight. Not getting a log
+    // leaves the session exactly as it would have been without one, which is a
+    // supported state. A dup2 that fails partway does not: the first call can
+    // succeed and the second fail, leaving standard output on the log and
+    // standard error still on the terminal, which is neither of the two states
+    // this function is meant to produce. There is nothing to degrade to from
+    // there, so it is reported.
     if (interop.isError(std.posix.system.dup2(log_file.handle, std.posix.STDOUT_FILENO))) return error.StdoutDup2Failed;
     if (interop.isError(std.posix.system.dup2(log_file.handle, std.posix.STDERR_FILENO))) return error.StderrDup2Failed;
 
