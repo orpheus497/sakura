@@ -598,13 +598,35 @@ fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: [
         };
     }
 
-    const log_file = if (create) (std.Io.Dir.cwd().createFile(io, session_log, .{ .permissions = .fromMode(0o666) }) catch |err| {
+    // Action purpose: 0600, not 0666. This file now receives the session's
+    // standard error as well as its standard output, so it holds whatever a
+    // session writes when something goes wrong -- paths, command lines,
+    // occasionally a token in a diagnostic. It lives under the user's home,
+    // which is mode 0755 by default and therefore searchable, so at 0666 minus
+    // the usual 022 umask it was readable by every local account.
+    const log_file = if (create) (std.Io.Dir.cwd().createFile(io, session_log, .{ .permissions = .fromMode(0o600) }) catch |err| {
         try global_log_file.err(io, "auth/sys", "failed to create new session log file: {s}", .{@errorName(err)});
         return err;
     }) else (std.Io.Dir.cwd().openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
         try global_log_file.err(io, "auth/sys", "failed to open existing session log file: {s}", .{@errorName(err)});
         return err;
     });
+
+    // Action purpose: Then chmod it regardless, because the mode passed to
+    // createFile applies only when the file is new -- O_CREAT ignores it for an
+    // existing path. A log left behind by an earlier version would otherwise
+    // keep its 0644 and the mode above would silently fix nothing. Done before
+    // the redirection below so that nothing has been written while the file was
+    // still readable by others.
+    //
+    // Deliberately fatal: the point of the call is that the session's stderr
+    // must not land in a world-readable file, and carrying on after it fails
+    // would do exactly that.
+    log_file.setPermissions(io, .fromMode(0o600)) catch |err| {
+        try global_log_file.err(io, "auth/sys", "failed to restrict session log file permissions: {s}", .{@errorName(err)});
+        log_file.close(io);
+        return err;
+    };
 
     // Action purpose: Send both of the session's streams to the log file, which
     // is what res/config.ini promises of it ("stdout and stderr of Wayland
