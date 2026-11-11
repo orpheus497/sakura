@@ -79,10 +79,41 @@ jobs:
       # Package names are not interchangeable between distributions, so each job
       # names its own. PAM headers need installing here, where FreeBSD has them
       # in the base system.
-      - run: sudo apt-get update
-      - run: >
-          sudo apt-get install -y --no-install-recommends
-          libpam0g-dev libxcb1-dev pkgconf build-essential
+      # Action purpose: retry the package step instead of failing the job on a
+      # package-mirror outage. The hosted runner resolves its archives through
+      # azure.archive.ubuntu.com, and when that name stops resolving apt exits
+      # 100 from `Unable to fetch some archives` before setup-zig has run --
+      # so the job reports a build failure without ever invoking the compiler.
+      # That happened three times in a row on three different commits while
+      # the FreeBSD, Arch and Fedora jobs passed on the same trees, which is
+      # what distinguishes it from a real failure.
+      #
+      # The apt timeouts are shortened deliberately. apt's own DNS retries
+      # make a single failing attempt take minutes, so without trimming them
+      # four attempts would run longer than the rest of the workflow put
+      # together.
+      #
+      # This hardens the job against a transient outage. It cannot rescue a
+      # sustained one: if the mirror is down for longer than these attempts
+      # span, the job still fails -- correctly, since the dependencies really
+      # are unavailable. The final `exit 1` keeps that honest rather than
+      # letting a half-installed toolchain reach `zig build`.
+      - name: Install build dependencies
+        run: |
+          set -eu
+          apt_opts='-o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20'
+          for attempt in 1 2 3 4; do
+            if sudo apt-get $apt_opts update \
+               && sudo apt-get $apt_opts install -y --no-install-recommends \
+                  libpam0g-dev libxcb1-dev pkgconf build-essential; then
+              exit 0
+            fi
+            echo "::warning::apt attempt $attempt failed" >&2
+            # No sleep after the last attempt: nothing follows it to wait for.
+            if [ "$attempt" -lt 4 ]; then sleep $((attempt * 15)); fi
+          done
+          echo "::error::package installation failed after 4 attempts" >&2
+          exit 1
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: ${{ env.ZIG_VERSION }}
