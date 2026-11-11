@@ -606,8 +606,24 @@ fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: [
         return err;
     });
 
-    if (interop.isError(std.posix.system.dup2(std.posix.STDOUT_FILENO, std.posix.STDERR_FILENO))) return error.StdoutDup2Failed;
-    if (interop.isError(std.posix.system.dup2(log_file.handle, std.posix.STDOUT_FILENO))) return error.LogFileDup2Failed;
+    // Action purpose: Send both of the session's streams to the log file, which
+    // is what res/config.ini promises of it ("stdout and stderr of Wayland
+    // sessions") and what the caller's own comment describes.
+    //
+    // The order used to be the other way round: the inherited stdout was
+    // dup2'd onto stderr first, and only then the log file onto stdout. That
+    // left stderr pointing at the virtual terminal Sakura itself was handed, so
+    // the log caught stdout alone -- and stderr is where almost everything
+    // worth reading goes. wlroots, and therefore every compositor built on it,
+    // logs exclusively to stderr, so a compositor's startup failures and crash
+    // output never reached the file the user is told to look in, and were
+    // painted over by the compositor taking the terminal moments later.
+    //
+    // Both descriptors are pointed at the log file directly rather than
+    // chained through one another, so neither line depends on the other having
+    // run first.
+    if (interop.isError(std.posix.system.dup2(log_file.handle, std.posix.STDOUT_FILENO))) return error.StdoutDup2Failed;
+    if (interop.isError(std.posix.system.dup2(log_file.handle, std.posix.STDERR_FILENO))) return error.StderrDup2Failed;
 
     return log_file;
 }

@@ -1406,13 +1406,11 @@ points at something not installed, or a Wayland compositor could not get an
 `XDG_RUNTIME_DIR` (`wl_display_add_socket_auto` fails outright when it is unset
 or not an absolute path).
 
-Note what that file does and does not hold. For an entry not marked
-`Terminal=true`, Sakura points the session's standard *output* at it; standard
-error is pointed at the virtual terminal Sakura inherited, not at the file. So
-a program that writes its diagnostics to stderr — which includes anything built
-on wlroots, whose default log sink is stderr — will not be in there. For those,
-use whatever capture the session itself offers; hikari-sakura, for instance, has
-`HIKARI_LOG`.
+For any entry not marked `Terminal=true`, Sakura points both of the session's
+streams at that file, so a compositor's own diagnostics are in there with
+everything else — which matters because anything built on wlroots logs
+exclusively to standard error. X11 and shell sessions are not covered; see the
+note beside `session_log` in `config.ini`.
 
 ### My desktop environment is not in the list
 
