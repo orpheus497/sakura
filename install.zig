@@ -172,7 +172,7 @@ fn installSakura(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, 
             const patched_config = try patchFile(allocator, io, "res/config.ini", patch_map);
             defer allocator.free(patched_config);
 
-            try installText(io, patched_config, config_dir, sakura_config_directory, "config.ini", .{});
+            try installText(io, patched_config, config_dir, sakura_config_directory, "config.ini", .default_file);
 
             try installFile(io, "res/startup.sh", config_dir, sakura_config_directory, "startup.sh", .{ .permissions = .fromMode(0o755) });
         }
@@ -180,12 +180,12 @@ fn installSakura(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, 
         const patched_example_config = try patchFile(allocator, io, "res/config.ini", patch_map);
         defer allocator.free(patched_example_config);
 
-        try installText(io, patched_example_config, config_dir, sakura_config_directory, "config.ini.example", .{});
+        try installText(io, patched_example_config, config_dir, sakura_config_directory, "config.ini.example", .default_file);
 
         const patched_setup = try patchFile(allocator, io, "res/setup.sh", patch_map);
         defer allocator.free(patched_setup);
 
-        try installText(io, patched_setup, config_dir, sakura_config_directory, "setup.sh", .{ .permissions = .fromMode(0o755) });
+        try installText(io, patched_setup, config_dir, sakura_config_directory, "setup.sh", .fromMode(0o755));
 
         // Ready-made /etc/gettytab and /etc/ttys snippets for the
         // administrator. Both describe files that exist only on FreeBSD, so
@@ -195,12 +195,12 @@ fn installSakura(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, 
             const patched_gettytab = try patchFile(allocator, io, "res/sakura.gettytab", patch_map);
             defer allocator.free(patched_gettytab);
 
-            try installText(io, patched_gettytab, config_dir, sakura_config_directory, "gettytab.example", .{});
+            try installText(io, patched_gettytab, config_dir, sakura_config_directory, "gettytab.example", .default_file);
 
             const patched_ttys = try patchFile(allocator, io, "res/sakura.ttys", patch_map);
             defer allocator.free(patched_ttys);
 
-            try installText(io, patched_ttys, config_dir, sakura_config_directory, "ttys.example", .{});
+            try installText(io, patched_ttys, config_dir, sakura_config_directory, "ttys.example", .default_file);
         }
 
         try installFile(io, "res/example.dur", config_dir, sakura_config_directory, "example.dur", .{ .permissions = .fromMode(0o755) });
@@ -219,7 +219,7 @@ fn installSakura(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchMap, 
         const patched_readme = try patchFile(allocator, io, "res/custom-sessions/README", patch_map);
         defer allocator.free(patched_readme);
 
-        try installText(io, patched_readme, custom_sessions_dir, sakura_custom_sessions_directory, "README", .{});
+        try installText(io, patched_readme, custom_sessions_dir, sakura_custom_sessions_directory, "README", .default_file);
     }
 
     {
@@ -327,11 +327,11 @@ fn installInitSystem(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchM
 
             const patched_conf = try patchFile(allocator, io, "res/sakura-runit-service/conf", patch_map);
             defer allocator.free(patched_conf);
-            try installText(io, patched_conf, service_dir, service_path, "conf", .{});
+            try installText(io, patched_conf, service_dir, service_path, "conf", .default_file);
 
             const patched_run = try patchFile(allocator, io, "res/sakura-runit-service/run", patch_map);
             defer allocator.free(patched_run);
-            try installText(io, patched_run, service_dir, service_path, "run", .{ .permissions = .fromMode(0o755) });
+            try installText(io, patched_run, service_dir, service_path, "run", .fromMode(0o755));
 
             try installFile(io, "res/sakura-runit-service/finish", service_dir, service_path, "finish", .{ .permissions = .fromMode(0o755) });
 
@@ -358,7 +358,7 @@ fn installInitSystem(allocator: std.mem.Allocator, io: std.Io, patch_map: PatchM
 
             const patched_run = try patchFile(allocator, io, "res/sakura-s6/run", patch_map);
             defer allocator.free(patched_run);
-            try installText(io, patched_run, service_dir, service_path, "run", .{ .permissions = .fromMode(0o755) });
+            try installText(io, patched_run, service_dir, service_path, "run", .fromMode(0o755));
 
             try installFile(io, "res/sakura-s6/type", service_dir, service_path, "type", .{});
 
@@ -403,7 +403,7 @@ fn installServiceFile(
     const patched = try patchFile(allocator, io, source, patch_map);
     defer allocator.free(patched);
 
-    try installText(io, patched, service_dir, service_path, destination, .{ .permissions = .fromMode(mode) });
+    try installText(io, patched, service_dir, service_path, destination, .fromMode(mode));
 }
 
 // Function purpose: remove whatever installInitSystem put down. Kept in step
@@ -475,7 +475,7 @@ fn installGettyWrapper(allocator: std.mem.Allocator, io: std.Io, patch_map: Patc
     const patched_wrapper = try patchFile(allocator, io, "res/sakura-wrapper", patch_map);
     defer allocator.free(patched_wrapper);
 
-    try installText(io, patched_wrapper, executable_dir, exe_path, wrapper_name, .{ .permissions = .fromMode(0o755) });
+    try installText(io, patched_wrapper, executable_dir, exe_path, wrapper_name, .fromMode(0o755));
 }
 
 fn installFile(
@@ -516,15 +516,31 @@ fn installText(
     destination_directory: std.Io.Dir,
     destination_directory_path: []const u8,
     destination_file: []const u8,
-    options: std.Io.Dir.CreateFileOptions,
+    permissions: std.Io.File.Permissions,
 ) !void {
-    var file = try destination_directory.createFile(io, destination_file, options);
-    defer file.close(io);
+    // Action purpose: replace the destination atomically instead of opening it
+    // and writing in place. Dir.createFile truncates to zero first, so any
+    // failure between that truncation and the flush -- ENOSPC, EIO, a quota, an
+    // interrupted install -- leaves the file empty or half-written. For the
+    // getty wrapper that is not a cosmetic loss: getty(8) execs it on the
+    // virtual terminal it owns, a zero-length file fails execve with ENOEXEC, a
+    // partial one returns without ever reaching Sakura, and init(8) respawns
+    // the terminal into a loop recoverable only from another one. Writing to an
+    // unnamed file and renaming it over the destination keeps the previous
+    // contents until the new ones are complete. installFile already gets this
+    // through Dir.copyFile; this is the path that did not.
+    var atomic_file = try destination_directory.createFileAtomic(io, destination_file, .{
+        .permissions = permissions,
+        .replace = true,
+    });
+    defer atomic_file.deinit(io);
 
     var buffer: [1024]u8 = undefined;
-    var writer = file.writer(io, &buffer);
-    try writer.interface.writeAll(text);
-    try writer.interface.flush();
+    var file_writer = atomic_file.file.writer(io, &buffer);
+    try file_writer.interface.writeAll(text);
+    try file_writer.flush();
+
+    try atomic_file.replace(io);
 
     std.debug.print("info: installed {s}/{s}\n", .{ destination_directory_path, destination_file });
 }
