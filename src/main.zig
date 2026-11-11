@@ -1816,12 +1816,10 @@ fn authenticate(ptr: *anyopaque) !bool {
             const session_key: ?[]const u8 = key: {
                 if (user.session_index < state.session.label.list.items.len) {
                     const environment = state.session.label.list.items[user.session_index].environment;
-                    if (environment.file_name.len == 0) break :key null;
-                    break :key std.fmt.bufPrint(&key_buffer, "{s}/{s}", .{
-                        @tagName(environment.display_server),
-                        environment.file_name,
-                    }) catch break :key null;
+                    break :key sessionKey(&key_buffer, environment.display_server, environment.file_name);
                 }
+                // A key read back from the save file cannot contain a newline,
+                // because the reader split the record on one to obtain it.
                 break :key user.session_key;
             };
 
@@ -2951,6 +2949,45 @@ fn clampSessionIndex(session: *Session, index: usize) usize {
 //
 // Matching is exact and case-sensitive, because the stem came from a directory
 // entry and file names on these systems are too.
+// Function purpose: build the save record's session key, or report that this
+// entry cannot have one.
+//
+// The key is "<display server>/<desktop file stem>", which is what
+// findSavedSession below parses back. Null means the entry gets no key and is
+// remembered by its index alone, which is what every entry did before keys
+// existed and is therefore always a safe answer.
+//
+// Three things make it null.
+//
+// An empty file_name: the shell and xinitrc pseudo-entries have no desktop
+// file, and an empty stem would match the wrong one of them on the way back.
+//
+// A stem containing a newline, which is the one that matters. A save record is
+// a single line, so a key carrying the delimiter splits one user's record in
+// two, and the reader then takes the tail as another user's remembered
+// session. This is reachable rather than theoretical: POSIX forbids only NUL
+// and '/' in a path component, so a newline in a desktop file name is legal,
+// and crawl carries the stem through verbatim. A file named
+// "evil\nvictim:3:wayland-pwn.desktop" created on an ordinary filesystem makes
+// one write for "alice" emit
+//
+//     alice:5:wayland/evil
+//     victim:3:wayland-pwn
+//
+// and "victim" acquires a session they never chose. A carriage return is
+// refused with it: it does not split the record here, but it would be carried
+// into whatever next reads this file, and no stem needs one. Colons need no
+// such treatment -- the reader takes the rest of the line for the key, so they
+// survive intact.
+//
+// A stem too long to format, which cannot be represented either.
+fn sessionKey(buffer: []u8, display_server: DisplayServer, file_name: []const u8) ?[]const u8 {
+    if (file_name.len == 0) return null;
+    if (std.mem.indexOfAny(u8, file_name, "\r\n") != null) return null;
+
+    return std.fmt.bufPrint(buffer, "{s}/{s}", .{ @tagName(display_server), file_name }) catch null;
+}
+
 fn findSavedSession(items: anytype, key: []const u8) ?usize {
     // Action purpose: An empty key matches nothing. The shell and xinitrc
     // pseudo-entries have no desktop file and so carry an empty file_name, and
@@ -3305,4 +3342,37 @@ test "a saved session key is matched by type and stem, with explicit fallbacks" 
     // file_name.
     try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, ""));
     try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, "wayland/"));
+}
+
+test "sessionKey builds the key a saved session is found by" {
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+
+    try std.testing.expectEqualStrings("wayland/hikari", sessionKey(&buffer, .wayland, "hikari").?);
+    try std.testing.expectEqualStrings("x11/hikari", sessionKey(&buffer, .x11, "hikari").?);
+
+    // A colon is legal in a desktop file name and must survive, because the
+    // reader takes the rest of the line for the key.
+    try std.testing.expectEqualStrings("wayland/od:d", sessionKey(&buffer, .wayland, "od:d").?);
+}
+
+test "sessionKey refuses a stem that would break the record" {
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+
+    // The pseudo-entries, which have no desktop file.
+    try std.testing.expectEqual(@as(?[]const u8, null), sessionKey(&buffer, .shell, ""));
+
+    // A save record is one line. Were this key written, one user's record
+    // would become two and the reader would credit the tail to whoever the
+    // injected line names -- so there must be no key at all.
+    try std.testing.expectEqual(
+        @as(?[]const u8, null),
+        sessionKey(&buffer, .wayland, "evil\nvictim:3:wayland-pwn"),
+    );
+    try std.testing.expectEqual(@as(?[]const u8, null), sessionKey(&buffer, .wayland, "a\rb"));
+    try std.testing.expectEqual(@as(?[]const u8, null), sessionKey(&buffer, .wayland, "\n"));
+
+    // Too long to format is equally unrepresentable.
+    var long: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    @memset(&long, 'a');
+    try std.testing.expectEqual(@as(?[]const u8, null), sessionKey(&buffer, .wayland, &long));
 }
