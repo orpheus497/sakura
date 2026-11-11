@@ -855,7 +855,7 @@ pub fn main(init: std.process.Init) !void {
     if (state.config.waylandsessions) |waylandsessions| {
         var wayland_session_dirs = std.mem.splitScalar(u8, waylandsessions, ':');
         while (wayland_session_dirs.next()) |dir| {
-            crawl(&state.session, state.io, state.lang, dir, .wayland) catch |err| {
+            const skipped = crawl(&state.session, state.io, &state.log_file, state.lang, dir, .wayland) catch |err| {
                 has_crawl_error = true;
                 try state.log_file.err(
                     state.io,
@@ -863,7 +863,9 @@ pub fn main(init: std.process.Init) !void {
                     "failed to crawl wayland session directory '{s}': {s}",
                     .{ dir, @errorName(err) },
                 );
+                continue;
             };
+            if (skipped > 0) has_crawl_error = true;
         }
     }
 
@@ -871,7 +873,7 @@ pub fn main(init: std.process.Init) !void {
         if (state.config.xsessions) |xsessions| {
             var x_session_dirs = std.mem.splitScalar(u8, xsessions, ':');
             while (x_session_dirs.next()) |dir| {
-                crawl(&state.session, state.io, state.lang, dir, .x11) catch |err| {
+                const skipped = crawl(&state.session, state.io, &state.log_file, state.lang, dir, .x11) catch |err| {
                     has_crawl_error = true;
                     try state.log_file.err(
                         state.io,
@@ -879,14 +881,16 @@ pub fn main(init: std.process.Init) !void {
                         "failed to crawl x11 session directory '{s}': {s}",
                         .{ dir, @errorName(err) },
                     );
+                    continue;
                 };
+                if (skipped > 0) has_crawl_error = true;
             }
         }
     }
 
     var custom_session_dirs = std.mem.splitScalar(u8, state.config.custom_sessions, ':');
     while (custom_session_dirs.next()) |dir| {
-        crawl(&state.session, state.io, state.lang, dir, .custom) catch |err| {
+        const skipped = crawl(&state.session, state.io, &state.log_file, state.lang, dir, .custom) catch |err| {
             has_crawl_error = true;
             try state.log_file.err(
                 state.io,
@@ -894,7 +898,9 @@ pub fn main(init: std.process.Init) !void {
                 "failed to crawl custom session directory '{s}': {s}",
                 .{ dir, @errorName(err) },
             );
+            continue;
         };
+        if (skipped > 0) has_crawl_error = true;
     }
 
     if (has_crawl_error) {
@@ -2594,11 +2600,17 @@ fn addOtherEnvironment(session: *Session, lang: Lang, display_server: DisplaySer
     });
 }
 
-fn crawl(session: *Session, io: std.Io, lang: Lang, path: []const u8, display_server: DisplayServer) !void {
+// Function purpose: Read every desktop entry in one session directory and add
+// each as a selectable environment. Returns the number of entries that were
+// skipped because they could not be parsed, so the caller can tell the user
+// that the list is incomplete.
+fn crawl(session: *Session, io: std.Io, log_file: *LogFile, lang: Lang, path: []const u8, display_server: DisplayServer) !usize {
     if (!std.Io.Dir.path.isAbsolute(path)) return error.PathNotAbsolute;
 
     var iterable_directory = try std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true });
     defer iterable_directory.close(io);
+
+    var skipped: usize = 0;
 
     var iterator = iterable_directory.iterate();
     while (try iterator.next(io)) |item| {
@@ -2607,10 +2619,36 @@ fn crawl(session: *Session, io: std.Io, lang: Lang, path: []const u8, display_se
         const entry_path = try std.fmt.allocPrint(session.label.allocator, "{s}/{s}", .{ path, item.name });
         defer session.label.allocator.free(entry_path);
         var entry_ini = Ini(Entry).init(session.label.allocator);
-        const data = try entry_ini.readFileToStruct(io, entry_path, .{
+
+        // Action purpose: One unreadable entry must cost only itself. This call
+        // returns an error for any value it cannot convert -- a `Terminal` that
+        // is not exactly true/false/1/0, for instance -- and that error used to
+        // propagate out of crawl(), abandoning every entry the iterator had not
+        // reached yet. A single third-party file was therefore enough to hide an
+        // installed session, including a compositor's, from the login list, with
+        // nothing naming the file responsible. Skip that entry, say which one it
+        // was, and carry on with the rest of the directory.
+        //
+        // deinit() runs here rather than through the errdefer below, because
+        // `continue` is not an error return and would not trigger it. The
+        // errdefer is armed only after this point, so there is no path on which
+        // the arena is freed twice. The log write is deliberately not `try`d:
+        // failing to record a skipped entry is not a reason to drop the entries
+        // that parsed cleanly.
+        const data = entry_ini.readFileToStruct(io, entry_path, .{
             .fieldHandler = null,
             .comment_characters = "#",
-        });
+        }) catch |err| {
+            log_file.err(
+                io,
+                "sys",
+                "skipping unreadable session entry '{s}': {s}",
+                .{ entry_path, @errorName(err) },
+            ) catch {};
+            entry_ini.deinit();
+            skipped += 1;
+            continue;
+        };
         errdefer entry_ini.deinit();
 
         const file_name = try session.label.allocator.dupe(u8, std.Io.Dir.path.stem(item.name));
@@ -2650,6 +2688,8 @@ fn crawl(session: *Session, io: std.Io, lang: Lang, path: []const u8, display_se
             .is_terminal = entry.Terminal orelse false,
         });
     }
+
+    return skipped;
 }
 
 fn isValidUsername(username: []const u8, usernames: StringList) bool {
