@@ -110,7 +110,32 @@ fn write(
     } else {
         var buffer: [syslog_line_capacity + 1]u8 = undefined;
         const line = formatSyslogLine(&buffer, level, category, message, args);
-        std.posix.system.syslog(priority, line.ptr);
+
+        // Action purpose: hand the diagnostic to syslog(3) as an argument, not
+        // as its format string. The constant "%s" is the whole point and must
+        // not be removed.
+        //
+        // syslog(3) is variadic and its second parameter is a printf format:
+        // FreeBSD's libc does `va_start(ap, fmt); vsyslog(pri, fmt, ap)` and
+        // ends at `(void)vfprintf(fp, fmt, ap)`, and glibc's __syslog forwards
+        // fmt to __vsyslog_internal, which passes it to __vsnprintf_internal.
+        // Passing the message there means every per cent sign in it is read as
+        // a conversion with no argument behind it.
+        //
+        // This is not hypothetical for this program. A session's Exec line is
+        // logged verbatim by executeCmd, and desktop entries carry field codes
+        // -- on this machine 9 of 30 installed Exec lines contain one. Two of
+        // the codes in them, %f and %F, are also printf conversions for
+        // double, so they consume an argument that was never pushed: the
+        // command line in the log comes out mangled and the read is
+        // uninitialised. %m is worse in a quieter way, because syslog(3)
+        // replaces it with strerror() before vfprintf is reached, so a path
+        // containing it is logged as something it is not. %n would be a write.
+        //
+        // The configured session_log path, PAM variable values and Lua error
+        // text reach these diagnostics too, and none of them are this
+        // program's to choose.
+        std.posix.system.syslog(priority, "%s", line.ptr);
     }
 }
 
