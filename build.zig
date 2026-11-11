@@ -76,23 +76,28 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Sakura supports FreeBSD as its first-class platform and Linux as a
-    // second-class one. Bail out early on anything else with a readable message
-    // instead of letting the build fail somewhere deep inside a C header
-    // translation.
-    switch (target.result.os.tag) {
-        .freebsd, .linux => {},
-        else => {
-            std.debug.print(
-                "error: Sakura supports FreeBSD and Linux, but the requested target is '{t}'.\n",
-                .{target.result.os.tag},
-            );
-            return error.UnsupportedTarget;
-        },
+    // Action purpose: Say what is tested and then get out of the way. FreeBSD
+    // 15.0 or newer is the platform Sakura is built for and Linux is a
+    // supported second; anything else is untested, which is not the same as
+    // forbidden. This used to return error.UnsupportedTarget, which stopped a
+    // NetBSD, OpenBSD or DragonFly build before the compiler had looked at a
+    // single line -- so nobody could find out how close their platform was, or
+    // send a patch for the part that did not fit. A warning costs nothing and
+    // promises nothing: the build proceeds, and if a platform-specific piece is
+    // genuinely missing it fails later with a real compiler error that names
+    // it.
+    const is_freebsd = target.result.os.tag == .freebsd;
+    const is_linux = target.result.os.tag == .linux;
+
+    if (!is_freebsd and !is_linux) {
+        std.debug.print(
+            "warning: Sakura targets FreeBSD 15.0+ and Linux; '{t}' is untested. Building anyway.\n",
+            .{target.result.os.tag},
+        );
     }
 
-    // The install layout follows each platform's own convention: FreeBSD puts
-    // ports software under /usr/local with its configuration in
+    // The install layout follows each platform's own convention. The BSDs put
+    // third-party software under /usr/local with its configuration in
     // /usr/local/etc (hier(7)), while on Linux the prefix is /usr and
     // configuration lives in /etc.
     //
@@ -100,9 +105,15 @@ pub fn build(b: *std.Build) !void {
     // a /usr/local/etc default would install Sakura's policy where PAM never
     // looks and authentication would fail with an error that does not point at
     // the cause.
-    const is_freebsd = target.result.os.tag == .freebsd;
-    const default_prefix_directory = if (is_freebsd) "/usr/local" else "/usr";
-    const default_config_directory = if (is_freebsd) "/usr/local/etc" else "/etc";
+    //
+    // Keyed on Linux rather than on FreeBSD, so that the /usr and /etc answer
+    // is given only where it is actually right. It used to be the other way
+    // round, which meant an untested BSD silently inherited Linux's paths --
+    // wrong on every BSD. Everything that is not Linux now lands on
+    // /usr/local, which is correct for the BSDs and the safer guess for an
+    // unknown system; override with -Dprefix_directory and -Dconfig_directory.
+    const default_prefix_directory = if (is_linux) "/usr" else "/usr/local";
+    const default_config_directory = if (is_linux) "/etc" else "/usr/local/etc";
 
     const dest_directory = b.option([]const u8, "dest_directory", "Specify a destination directory for installation") orelse "";
     const config_directory = b.option([]const u8, "config_directory", "Specify a default config directory (default is /usr/local/etc on FreeBSD, /etc on Linux). This path gets embedded into the binary. On Linux it must resolve to /etc on the target host: Linux-PAM reads policies only from the directory libpam was built with, and the non-systemd service files install relative to this root. Use -Ddest_directory for staged packaging instead") orelse default_config_directory;
@@ -112,18 +123,30 @@ pub fn build(b: *std.Build) !void {
     // FreeBSD is started by getty(8) from /etc/ttys and needs no service file,
     // so it defaults to none there. On Linux the default is systemd, as the
     // most widely deployed, and every other supported init system can be
-    // selected explicitly.
+    // selected explicitly. The other BSDs default to none for the same reason
+    // FreeBSD does -- none of the service files shipped here is theirs.
     const init_system = b.option(
         InitSystem,
         "init_system",
-        "Init system to install a service file for: none, systemd, openrc, runit, s6, dinit or sysvinit (Linux only; default is systemd on Linux and none on FreeBSD)",
-    ) orelse if (is_freebsd) InitSystem.none else InitSystem.systemd;
+        "Init system to install a service file for: none, systemd, openrc, runit, s6, dinit or sysvinit (Linux only; default is systemd on Linux and none elsewhere)",
+    ) orelse if (is_linux) InitSystem.systemd else InitSystem.none;
 
-    if (is_freebsd and init_system != .none) {
-        std.debug.print(
-            "error: -Dinit_system is for Linux only; FreeBSD starts Sakura with getty(8) from /etc/ttys.\n",
-            .{},
-        );
+    // The service files are Linux ones, so asking for one anywhere else would
+    // install a unit the system cannot start. Still an error rather than a
+    // warning, because unlike an untested target this is a request that cannot
+    // be honoured rather than one that merely has not been tried.
+    if (!is_linux and init_system != .none) {
+        if (is_freebsd) {
+            std.debug.print(
+                "error: -Dinit_system is for Linux only; FreeBSD starts Sakura with getty(8) from /etc/ttys.\n",
+                .{},
+            );
+        } else {
+            std.debug.print(
+                "error: -Dinit_system is for Linux only; the service files shipped here are not '{t}' ones.\n",
+                .{target.result.os.tag},
+            );
+        }
         return error.InitSystemNotApplicable;
     }
 
@@ -210,6 +233,15 @@ pub fn build(b: *std.Build) !void {
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_tests.step);
+
+    // Action purpose: cover the dependency modules too. b.addTest registers
+    // only the tests in the module it is given, so testing exe.root_module
+    // reached src/ and nothing else -- the test blocks under sakura-ui/src and
+    // sakura-core/src were compiled by no CI command. sakura-ui's own test step
+    // pulls in sakura-core's, so depending on it covers both.
+    if (sakura_ui.builder.top_level_steps.get("test")) |ui_tests| {
+        test_step.dependOn(&ui_tests.step);
+    }
 
     const installexe_step = b.step("installexe", "Install Sakura, its configuration and its getty wrapper");
     installexe_step.dependOn(&InstallStep(

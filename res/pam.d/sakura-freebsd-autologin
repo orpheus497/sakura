@@ -3,12 +3,23 @@
 # FreeBSD. It permits authentication without a password, then defers account,
 # password and session handling to the system login stack.
 
-# OpenPAM gained the "-" (non-fatal module) prefix only in FreeBSD 15.0. On
-# 14.3 and earlier an unrecognised facility such as "-session" is a fatal parse
-# error: openpam_configure() fails the entire policy rather than skipping that
-# one line, and nobody can log in. Every module named here must therefore exist
-# on every supported release. The Linux policy is a separate file for exactly
-# this reason -- it depends on that prefix.
+# pam_permit.so replaces the base system's entire auth stack rather than adding
+# to it, so everything that stack would have enforced is bypassed -- that being
+# the point of automatic login, but worth stating plainly: this policy
+# authenticates nobody.
+#
+# The other three facilities still defer to the system login stack, which is
+# what keeps the session itself identical to a normal login. In particular
+# `session include login` reaches /etc/pam.d/system and so runs pam_xdg(8),
+# which creates /var/run/xdg/$USER and publishes XDG_RUNTIME_DIR. A Wayland
+# compositor cannot create its socket without it, so dropping that line would
+# break a graphical autologin specifically.
+#
+# Nothing here needs the leading "-" (non-fatal module) prefix, which OpenPAM
+# only understands from FreeBSD 15.0. Since 15.0 is the baseline it is
+# available if a future addition wants it. The Linux policy stays a separate
+# file because it names distribution-specific modules with no FreeBSD
+# counterpart.
 auth       required     pam_permit.so
 account    include      login
 password   include      login

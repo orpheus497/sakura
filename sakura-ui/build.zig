@@ -58,4 +58,13 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
+
+    // Action purpose: run the tests of the module this one is built on, so that
+    // one `zig build test` covers the whole tree. sakura-core declares a test
+    // step of its own, but nothing reached it: the root build depends on
+    // sakura-ui and only sakura-ui depends on sakura-core, so any test added
+    // under sakura-core/src was collected by no command CI runs.
+    if (sakura_core.builder.top_level_steps.get("test")) |core_tests| {
+        test_step.dependOn(&core_tests.step);
+    }
 }

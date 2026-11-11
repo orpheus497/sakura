@@ -41,6 +41,16 @@ const OldSave = @import("config/OldSave.zig");
 const SavedUsers = @import("config/SavedUsers.zig");
 const custom = @import("config/custom.zig");
 const DisplayServer = @import("enums.zig").DisplayServer;
+
+// Constant purpose: The read bound for one save-file record. takeDelimiter
+// fails rather than truncating when a line does not fit, and that failure
+// clears save_file_intact and abandons every later user's remembered session,
+// so this has to clear the longest record the writer below can emit: a login
+// name (MAXLOGNAME is 33 on FreeBSD), a usize in decimal (20 digits), two
+// separators, a display-server tag and a desktop file name stem (NAME_MAX,
+// 255) -- roughly 310 bytes. Named rather than written in place so the test
+// covering it checks this value instead of a copy of it.
+const save_record_max_len = 1024;
 const Environment = @import("Environment.zig");
 const Entry = Environment.Entry;
 
@@ -323,7 +333,16 @@ pub fn main(init: std.process.Init) !void {
         var save_file = std.Io.Dir.cwd().openFile(state.io, state.save_path, .{}) catch break :read_save_file;
         defer save_file.close(state.io);
 
-        var file_buffer: [256]u8 = undefined;
+        // Action purpose: 1 KiB, not the 256 bytes this used to be. A record is
+        // now "username:index:session_name", and takeDelimiter below fails
+        // rather than truncating when a line does not fit the buffer -- which
+        // sets save_file_intact and abandons every later user's remembered
+        // session. The worst case a writer here can emit is a login name
+        // (MAXLOGNAME is 33 on FreeBSD), a usize in decimal (20 digits), two
+        // separators and a desktop file name stem (NAME_MAX, 255), so roughly
+        // 310 bytes; 1 KiB clears that with room to spare and still bounds the
+        // read.
+        var file_buffer: [save_record_max_len]u8 = undefined;
         var file_reader = save_file.reader(state.io, &file_buffer);
         var reader = &file_reader.interface;
 
@@ -383,11 +402,20 @@ pub fn main(init: std.process.Init) !void {
 
             const session_index = std.fmt.parseInt(usize, session_index_str, 10) catch continue;
 
+            // Action purpose: Read the session key, which newer save files
+            // carry as a third field. rest() rather than next() because a
+            // desktop file name is allowed to contain a colon, and taking the
+            // remainder of the line keeps the key in one piece. A file written
+            // by an older version simply has nothing here, which is why the
+            // index is still read and still used as the fallback.
+            const session_key = user.rest();
+
             try state.saved_users.user_list.append(state.allocator, .{
                 .username = try state.allocator.dupe(u8, username),
                 .session_index = session_index,
                 .first_run = false,
                 .allocated_username = true,
+                .session_key = if (session_key.len > 0) try state.allocator.dupe(u8, session_key) else null,
             });
         }
     }
@@ -415,7 +443,7 @@ pub fn main(init: std.process.Init) !void {
     // no info-line message: that would need a new `Lang` key, and D-011 settled
     // that adding one is not worth breaking the locale files' completeness for.
     if (!state.save_file_intact) {
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "conf",
             "save file could not be read to the end; leaving it untouched this run so a partial read is not written back over it",
@@ -439,7 +467,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // Initialize terminal buffer
-    try state.log_file.info(state.io, "tui", "initializing terminal buffer", .{});
+    state.log_file.info(state.io, "tui", "initializing terminal buffer", .{});
     var labels = [_][]const u8{
         state.lang.login,
         state.lang.password,
@@ -472,7 +500,7 @@ pub fn main(init: std.process.Init) !void {
         random,
     );
     defer {
-        state.log_file.info(state.io, "tui", "shutting down terminal buffer", .{}) catch {};
+        state.log_file.info(state.io, "tui", "shutting down terminal buffer", .{});
         state.buffer.deinit();
     }
 
@@ -674,7 +702,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "cli",
             "unable to parse argument '{s}{s}': {s}",
@@ -688,7 +716,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to execute start command: exit code {d}",
@@ -703,7 +731,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "conf",
             "unable to parse config file: {s}",
@@ -711,7 +739,7 @@ pub fn main(init: std.process.Init) !void {
         );
 
         for (config_parser.errors.items) |err| {
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "conf",
                 "failed to convert value '{s}' of option '{s}' to type '{s}': {s}",
@@ -726,7 +754,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to open log file",
@@ -740,7 +768,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to set numlock: {s}",
@@ -810,7 +838,7 @@ pub fn main(init: std.process.Init) !void {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "sys",
                 "failed to add shell environment: {s}",
@@ -827,7 +855,7 @@ pub fn main(init: std.process.Init) !void {
                     state.config.error_bg,
                     state.config.error_fg,
                 );
-                try state.log_file.err(
+                state.log_file.err(
                     state.io,
                     "sys",
                     "failed to add xinitrc environment: {s}",
@@ -841,7 +869,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.bg,
             state.config.fg,
         );
-        try state.log_file.info(
+        state.log_file.info(
             state.io,
             "comp",
             "x11 support disabled at compile-time",
@@ -855,15 +883,17 @@ pub fn main(init: std.process.Init) !void {
     if (state.config.waylandsessions) |waylandsessions| {
         var wayland_session_dirs = std.mem.splitScalar(u8, waylandsessions, ':');
         while (wayland_session_dirs.next()) |dir| {
-            crawl(&state.session, state.io, state.lang, dir, .wayland) catch |err| {
+            const skipped = crawl(&state.session, state.io, &state.log_file, state.lang, dir, .wayland) catch |err| {
                 has_crawl_error = true;
-                try state.log_file.err(
+                state.log_file.err(
                     state.io,
                     "sys",
                     "failed to crawl wayland session directory '{s}': {s}",
                     .{ dir, @errorName(err) },
                 );
+                continue;
             };
+            if (skipped > 0) has_crawl_error = true;
         }
     }
 
@@ -871,30 +901,34 @@ pub fn main(init: std.process.Init) !void {
         if (state.config.xsessions) |xsessions| {
             var x_session_dirs = std.mem.splitScalar(u8, xsessions, ':');
             while (x_session_dirs.next()) |dir| {
-                crawl(&state.session, state.io, state.lang, dir, .x11) catch |err| {
+                const skipped = crawl(&state.session, state.io, &state.log_file, state.lang, dir, .x11) catch |err| {
                     has_crawl_error = true;
-                    try state.log_file.err(
+                    state.log_file.err(
                         state.io,
                         "sys",
                         "failed to crawl x11 session directory '{s}': {s}",
                         .{ dir, @errorName(err) },
                     );
+                    continue;
                 };
+                if (skipped > 0) has_crawl_error = true;
             }
         }
     }
 
     var custom_session_dirs = std.mem.splitScalar(u8, state.config.custom_sessions, ':');
     while (custom_session_dirs.next()) |dir| {
-        crawl(&state.session, state.io, state.lang, dir, .custom) catch |err| {
+        const skipped = crawl(&state.session, state.io, &state.log_file, state.lang, dir, .custom) catch |err| {
             has_crawl_error = true;
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "sys",
                 "failed to crawl custom session directory '{s}': {s}",
                 .{ dir, @errorName(err) },
             );
+            continue;
         };
+        if (skipped > 0) has_crawl_error = true;
     }
 
     if (has_crawl_error) {
@@ -905,13 +939,73 @@ pub fn main(init: std.process.Init) !void {
         );
     }
 
+    // Action purpose: Now that the session list is final, turn each saved
+    // session name back into a position in it. Everything downstream keeps
+    // working in indices -- UserList holds a pointer to each of these, so
+    // correcting the number here is seen everywhere it is later applied -- and
+    // the index read from the file remains the fallback for an entry that has
+    // no name, or whose name no longer matches anything installed.
+    for (state.saved_users.user_list.items) |*user| {
+        const session_key = user.session_key orelse continue;
+        if (findSavedSession(state.session.label.list.items, session_key)) |index| {
+            user.session_index = index;
+            continue;
+        }
+
+        // Action purpose: The key was written by a build that records one, and
+        // it matches nothing installed -- so that session is gone. The saved
+        // index is then not a weaker answer, it is a meaningless one: it points
+        // at whatever now occupies that position, which is some other session
+        // the user never chose. Fall back to the first entry and say so.
+        //
+        // A record with no key at all is left alone by the `orelse continue`
+        // above, because there the index is the only information in the file
+        // and is usually still right. Discarding it would lose the remembered
+        // session of everyone upgrading from a build that wrote no key.
+        state.log_file.info(
+            state.io,
+            "conf",
+            "saved session '{s}' for user '{s}' is not installed; selecting the first session instead of the saved position, which now refers to a different one",
+            .{ session_key, user.username },
+        );
+        user.session_index = 0;
+    }
+
+    // Action purpose: Report having nothing to log into, in the same shape as
+    // the no-users case below. Reachable in two ways: a sessions directory with
+    // nothing in it, which has always been possible, and every installed entry
+    // asking not to be listed via Hidden or NoDisplay, which became possible
+    // when those keys started being honoured. Both leave the list empty, and
+    // every site that reads the current selection has to tolerate that --
+    // authenticate() refuses outright rather than indexing nothing.
+    //
+    // err_crawl is reused deliberately rather than a new string being added:
+    // tools/check_invariants.py requires every key in Lang.zig to be present in
+    // all 25 locale files, and inserting untranslated English into each of them
+    // to describe this case would be worse than reusing the message already
+    // shown when the session search comes up short. The precise reason goes to
+    // the log, which is not translated.
+    if (state.session.label.list.items.len == 0) {
+        try state.info_line.addMessage(
+            state.lang.err_crawl,
+            state.config.error_bg,
+            state.config.error_fg,
+        );
+        state.log_file.err(
+            state.io,
+            "sys",
+            "no selectable session: every entry was absent, hidden (Hidden=true or NoDisplay=true), or unreadable, and no shell or x11 fallback is enabled",
+            .{},
+        );
+    }
+
     if (usernames.items.len == 0) {
         // If we have no usernames, simply add an error to the info line.
         // This effectively means you can't login, since there would be no local
         // accounts *and* no root account...but at this point, if that's the
         // case, you have bigger problems to deal with in the first place. :D
         if (!state.config.type_username) try state.info_line.addMessage(state.lang.err_no_users, state.config.error_bg, state.config.error_fg);
-        try state.log_file.err(state.io, "sys", "no users found", .{});
+        state.log_file.err(state.io, "sys", "no users found", .{});
     }
 
     state.password_label = Label.init(
@@ -951,7 +1045,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to lock password memory out of swap",
@@ -1002,7 +1096,7 @@ pub fn main(init: std.process.Init) !void {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "auth",
                 "autologin failed: username '{s}' not found",
@@ -1012,7 +1106,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         const session_index = findSessionByName(&state.session, auto_session) orelse {
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "auth",
                 "autologin failed: session '{s}' not found",
@@ -1025,7 +1119,7 @@ pub fn main(init: std.process.Init) !void {
             );
             break :check_autologin;
         };
-        try state.log_file.info(
+        state.log_file.info(
             state.io,
             "auth",
             "attempting autologin for user '{s}' with session '{s}'",
@@ -1054,7 +1148,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to get active tty: {s}",
@@ -1068,7 +1162,7 @@ pub fn main(init: std.process.Init) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to switch to tty {d}: {s}",
@@ -1185,7 +1279,7 @@ pub fn main(init: std.process.Init) !void {
                     state.config.error_bg,
                     state.config.error_fg,
                 );
-                try state.log_file.err(
+                state.log_file.err(
                     state.io,
                     "tui",
                     "failed to load the gif wallpaper: {s}",
@@ -1240,7 +1334,7 @@ pub fn main(init: std.process.Init) !void {
 
                 for (state.saved_users.user_list.items) |user| {
                     if (std.mem.eql(u8, username, user.username)) {
-                        state.session.label.current = @min(user.session_index, state.session.label.list.items.len - 1);
+                        state.session.label.current = clampSessionIndex(&state.session, user.session_index);
                         break;
                     }
                 }
@@ -1262,7 +1356,7 @@ pub fn main(init: std.process.Init) !void {
 
             default_input = .password;
 
-            state.session.label.current = @min(user.session_index, state.session.label.list.items.len - 1);
+            state.session.label.current = clampSessionIndex(&state.session, user.session_index);
         }
     }
 
@@ -1401,7 +1495,7 @@ pub fn main(init: std.process.Init) !void {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "sys",
                 "failed to get hostname: {s}",
@@ -1584,14 +1678,14 @@ fn customCommand(ptr: *anyopaque) !bool {
                 "sys",
                 "custom command '{s}' bound to {s} exited with code {d}",
                 .{ lbl.cmd.name, lbl.key, code },
-            ) catch {};
+            );
         },
         else => lbl.log_file.err(
             lbl.io,
             "sys",
             "custom command '{s}' bound to {s} did not exit normally",
             .{ lbl.cmd.name, lbl.key },
-        ) catch {},
+        ),
     }
     return false;
 }
@@ -1599,7 +1693,23 @@ fn customCommand(ptr: *anyopaque) !bool {
 fn authenticate(ptr: *anyopaque) !bool {
     var state: *UiState = @ptrCast(@alignCast(ptr));
 
-    try state.log_file.info(state.io, "auth", "starting authentication", .{});
+    state.log_file.info(state.io, "auth", "starting authentication", .{});
+
+    // Action purpose: Stop before anything reads the current selection. The
+    // forked child below does `list.items[label.current].environment`
+    // unconditionally, so on an empty list it indexes nothing -- and
+    // authenticating in order to start a session that does not exist is
+    // pointless regardless. The message matches the one shown at startup for
+    // the same condition.
+    if (state.session.label.list.items.len == 0) {
+        try state.info_line.addMessage(
+            state.lang.err_crawl,
+            state.config.error_bg,
+            state.config.error_fg,
+        );
+        state.log_file.err(state.io, "auth", "refusing to authenticate: no session is selectable", .{});
+        return false;
+    }
 
     if (!state.config.allow_empty_password and state.password.text.items.len == 0) {
         // Let's not log this message for security reasons
@@ -1615,7 +1725,7 @@ fn authenticate(ptr: *anyopaque) !bool {
                     state.config.error_bg,
                     state.config.error_fg,
                 );
-                try state.log_file.err(
+                state.log_file.err(
                     state.io,
                     "tui",
                     "failed to clear info line: {s}",
@@ -1640,7 +1750,7 @@ fn authenticate(ptr: *anyopaque) !bool {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "tui",
                 "failed to clear info line: {s}",
@@ -1666,7 +1776,7 @@ fn authenticate(ptr: *anyopaque) !bool {
             "conf",
             "failed to save current user data",
             .{},
-        ) catch {};
+        );
 
         var file = std.Io.Dir.cwd().createFile(state.io, state.save_path, .{}) catch |err| {
             state.log_file.err(
@@ -1674,7 +1784,7 @@ fn authenticate(ptr: *anyopaque) !bool {
                 "sys",
                 "failed to create save file: {s}",
                 .{@errorName(err)},
-            ) catch break :save_last_settings;
+            );
             break :save_last_settings;
         };
         defer file.close(state.io);
@@ -1688,8 +1798,36 @@ fn authenticate(ptr: *anyopaque) !bool {
         } else {
             try writer.print("{d}\n", .{state.login.?.label.current});
         }
+        // Action purpose: Write the session's identity as a third field, so the
+        // next run can restore the selection by it rather than by position. It
+        // comes from the live list, which is what the index currently refers
+        // to; for an index outside it, whatever key was read at startup is
+        // carried through unchanged rather than invented.
+        //
+        // Only crawled entries get a key. The shell and xinitrc pseudo-entries
+        // have no desktop file, so their file_name is empty, and the only other
+        // identity they have is a translated label that would stop matching the
+        // moment the user changed language. They are also added before the
+        // crawl, which puts them at fixed low positions that the filtering
+        // cannot shift -- so for exactly those entries the index is already the
+        // stable identifier, and it is left to do the job alone.
         for (state.saved_users.user_list.items) |user| {
-            try writer.print("{s}:{d}\n", .{ user.username, user.session_index });
+            var key_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+            const session_key: ?[]const u8 = key: {
+                if (user.session_index < state.session.label.list.items.len) {
+                    const environment = state.session.label.list.items[user.session_index].environment;
+                    break :key sessionKey(&key_buffer, environment.display_server, environment.file_name);
+                }
+                // A key read back from the save file cannot contain a newline,
+                // because the reader split the record on one to obtain it.
+                break :key user.session_key;
+            };
+
+            if (session_key) |key| {
+                try writer.print("{s}:{d}:{s}\n", .{ user.username, user.session_index, key });
+            } else {
+                try writer.print("{s}:{d}\n", .{ user.username, user.session_index });
+            }
         }
         try writer.flush();
 
@@ -1780,7 +1918,7 @@ fn authenticate(ptr: *anyopaque) !bool {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "auth",
             "failed to authenticate: {s}",
@@ -1803,7 +1941,7 @@ fn authenticate(ptr: *anyopaque) !bool {
             state.config.bg,
             state.config.fg,
         );
-        try state.log_file.info(state.io, "auth", "logged out", .{});
+        state.log_file.info(state.io, "auth", "logged out", .{});
     }
 
     if (state.config.auth_fails == 0 or state.auth_fails < state.config.auth_fails) {
@@ -1842,7 +1980,7 @@ fn decreaseBrightnessCmd(ptr: *anyopaque) !bool {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to decrease brightness: {s}",
@@ -1861,7 +1999,7 @@ fn increaseBrightnessCmd(ptr: *anyopaque) !bool {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to increase brightness: {s}",
@@ -1881,7 +2019,7 @@ fn updateNumlock(self: *Label, ptr: *anyopaque) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to get lock state for numlock: {s}",
@@ -1903,7 +2041,7 @@ fn updateCapslock(self: *Label, ptr: *anyopaque) !void {
             state.config.error_bg,
             state.config.error_fg,
         );
-        try state.log_file.err(
+        state.log_file.err(
             state.io,
             "sys",
             "failed to get lock state for capslock: {s}",
@@ -1927,7 +2065,7 @@ fn updateBattery(self: *Label, ptr: *anyopaque) !void {
     if (battery_source) |source| {
         const battery_percentage = interop.getBatteryPercentage(source) catch |err| {
             self.update_fn = null;
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "sys",
                 "failed to get battery percentage: {s}",
@@ -1962,7 +2100,7 @@ fn updateClock(self: *Label, ptr: *anyopaque) !void {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "tui",
                 "clock string too long",
@@ -2080,7 +2218,7 @@ fn updateCustomInfo(lbl: *Label, ptr: *anyopaque) !void {
                     "sys",
                     "custom label '{s}' failed: {s}",
                     .{ i.info.name, @errorName(err) },
-                ) catch {};
+                );
             };
             // A refresh of 0 leaves the counter at 0, which is what makes the
             // command run exactly once.
@@ -2144,6 +2282,15 @@ fn updateBox(self: *Box, ptr: *anyopaque) !void {
 
 fn updateSessionSpecifier(self: *Label, ptr: *anyopaque) !void {
     const state: *UiState = @ptrCast(@alignCast(ptr));
+
+    // Action purpose: This runs from the draw path, where an empty session list
+    // is a state to render rather than an error to raise. There is no
+    // specifier to show, so the field is left blank instead of indexing a list
+    // with no items in it.
+    if (state.session.label.list.items.len == 0) {
+        self.setText("");
+        return;
+    }
 
     const env = state.session.label.list.items[state.session.label.current];
     self.setText(env.environment.specifier);
@@ -2565,7 +2712,7 @@ fn handleInactivity(ptr: *anyopaque) !void {
                 state.config.error_bg,
                 state.config.error_fg,
             );
-            try state.log_file.err(
+            state.log_file.err(
                 state.io,
                 "sys",
                 "failed to execute inactivity command: exit code {d}",
@@ -2594,11 +2741,91 @@ fn addOtherEnvironment(session: *Session, lang: Lang, display_server: DisplaySer
     });
 }
 
-fn crawl(session: *Session, io: std.Io, lang: Lang, path: []const u8, display_server: DisplayServer) !void {
+// Function purpose: Return a copy of a desktop entry file with whole-line
+// comments removed, so the entry reader can run with comment stripping switched
+// off altogether.
+//
+// Action purpose: The Desktop Entry Specification makes "#" a comment marker
+// only at the start of a line -- "Lines beginning with a # and blank lines are
+// considered comments" -- and lets a value hold any printable ASCII character,
+// listing "#" among those an Exec argument would have to quote. The ini reader
+// underneath does not draw that distinction: it cuts every line at the first
+// "#" at any offset, which silently truncated `Exec=foo --bg=#1e1e2e` to
+// `Exec=foo --bg=` and `Name=C# Workbench` to `C`. That behaviour is deliberate
+// upstream -- its own test suite asserts that `names = Budgie;GNOME # Don't
+// mind me` parses to `Budgie;GNOME` -- so it cannot be corrected there without
+// forking the dependency. The comment lines are therefore removed here and the
+// reader is told to treat "#" as an ordinary character.
+//
+// Leading whitespace ahead of the "#" is tolerated, which is what GLib's
+// key-file parser accepts, and cannot swallow a real value line: a value line
+// has to begin with a key name. A backslash before a "#" is no longer special,
+// because it no longer needs to be -- the "#" is kept either way.
+//
+// Session entries only. Sakura's own config.ini and locale files keep the
+// reader's normal comment handling, which they are written against.
+fn stripEntryComments(allocator: Allocator, contents: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trimStart(u8, line, " \t");
+        if (trimmed.len > 0 and trimmed[0] == '#') continue;
+        try out.appendSlice(allocator, line);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+// Function purpose: Read one desktop entry file into the parsed struct, with
+// whole-line comments stripped beforehand by stripEntryComments.
+fn readEntryFile(allocator: Allocator, io: std.Io, entry_ini: *Ini(Entry), path: []const u8) !Entry {
+    var file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+
+    // Action purpose: bound the read. A desktop entry is a handful of
+    // key-value lines; 1 MiB is already far beyond any real one, and an
+    // unbounded read would pull whatever a stray file in the sessions
+    // directory happens to contain wholly into memory during startup.
+    // Exceeding the limit fails this entry alone, like any other read error.
+    var file_buffer: [4096]u8 = undefined;
+    var file_reader = file.reader(io, &file_buffer);
+    const contents = try file_reader.interface.allocRemaining(allocator, .limited(1 << 20));
+    defer allocator.free(contents);
+
+    return parseEntryText(allocator, entry_ini, contents);
+}
+
+// Function purpose: Parse the text of a desktop entry. Split out from
+// readEntryFile so the comment handling can be exercised without a file on
+// disk.
+fn parseEntryText(allocator: Allocator, entry_ini: *Ini(Entry), contents: []const u8) !Entry {
+    const stripped = try stripEntryComments(allocator, contents);
+    defer allocator.free(stripped);
+
+    // The reader copies every value it keeps into entry_ini's own arena, so
+    // freeing the stripped buffer on return does not leave the struct pointing
+    // into it.
+    var reader = std.Io.Reader.fixed(stripped);
+    return entry_ini.readToStruct(&reader, .{
+        .fieldHandler = null,
+        .comment_characters = "",
+    });
+}
+
+// Function purpose: Read every desktop entry in one session directory and add
+// each as a selectable environment. Returns the number of entries that were
+// skipped because they could not be parsed, so the caller can tell the user
+// that the list is incomplete.
+fn crawl(session: *Session, io: std.Io, log_file: *LogFile, lang: Lang, path: []const u8, display_server: DisplayServer) !usize {
     if (!std.Io.Dir.path.isAbsolute(path)) return error.PathNotAbsolute;
 
     var iterable_directory = try std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true });
     defer iterable_directory.close(io);
+
+    var skipped: usize = 0;
 
     var iterator = iterable_directory.iterate();
     while (try iterator.next(io)) |item| {
@@ -2607,14 +2834,49 @@ fn crawl(session: *Session, io: std.Io, lang: Lang, path: []const u8, display_se
         const entry_path = try std.fmt.allocPrint(session.label.allocator, "{s}/{s}", .{ path, item.name });
         defer session.label.allocator.free(entry_path);
         var entry_ini = Ini(Entry).init(session.label.allocator);
-        const data = try entry_ini.readFileToStruct(io, entry_path, .{
-            .fieldHandler = null,
-            .comment_characters = "#",
-        });
+
+        // Action purpose: One unreadable entry must cost only itself. This call
+        // returns an error for any value it cannot convert -- a `Terminal` that
+        // is not exactly true/false/1/0, for instance -- and that error used to
+        // propagate out of crawl(), abandoning every entry the iterator had not
+        // reached yet. A single third-party file was therefore enough to hide an
+        // installed session, including a compositor's, from the login list, with
+        // nothing naming the file responsible. Skip that entry, say which one it
+        // was, and carry on with the rest of the directory.
+        //
+        // deinit() runs here rather than through the errdefer below, because
+        // `continue` is not an error return and would not trigger it. The
+        // errdefer is armed only after this point, so there is no path on which
+        // the arena is freed twice. The log write cannot fail -- LogFile.err
+        // returns void by contract -- so failing to record a skipped entry can
+        // never drop the entries that parsed cleanly.
+        const data = readEntryFile(session.label.allocator, io, &entry_ini, entry_path) catch |err| {
+            log_file.err(
+                io,
+                "sys",
+                "skipping unreadable session entry '{s}': {s}",
+                .{ entry_path, @errorName(err) },
+            );
+            entry_ini.deinit();
+            skipped += 1;
+            continue;
+        };
         errdefer entry_ini.deinit();
 
-        const file_name = try session.label.allocator.dupe(u8, std.Io.Dir.path.stem(item.name));
         const entry = data.@"Desktop Entry";
+
+        // Action purpose: Honour the two keys that ask for an entry not to be
+        // offered. This is not an error and is not counted as a skip: the file
+        // is doing what it was installed to do. A package that renames a
+        // session ships the old name back with Hidden=true to retire it, so
+        // listing it anyway puts a session in the login box whose Exec target
+        // has been removed on purpose.
+        if ((entry.Hidden orelse false) or (entry.NoDisplay orelse false)) {
+            entry_ini.deinit();
+            continue;
+        }
+
+        const file_name = try session.label.allocator.dupe(u8, std.Io.Dir.path.stem(item.name));
         var maybe_xdg_session_desktop: ?[]const u8 = null;
         var maybe_xdg_desktop_names: ?[]const u8 = null;
 
@@ -2650,6 +2912,8 @@ fn crawl(session: *Session, io: std.Io, lang: Lang, path: []const u8, display_se
             .is_terminal = entry.Terminal orelse false,
         });
     }
+
+    return skipped;
 }
 
 fn isValidUsername(username: []const u8, usernames: StringList) bool {
@@ -2657,6 +2921,99 @@ fn isValidUsername(username: []const u8, usernames: StringList) bool {
         if (std.mem.eql(u8, username, valid_username)) return true;
     }
     return false;
+}
+
+// Function purpose: Bring a saved session position inside the current list.
+//
+// The obvious `@min(index, items.len - 1)` is wrong on an empty list: the
+// subtraction is unsigned, so it wraps instead of clamping, which panics in a
+// safe build and produces an enormous index in a fast one. An empty list has no
+// valid position at all, so 0 is returned and the caller is expected not to
+// index with it -- authenticate() refuses to run in that state.
+fn clampSessionIndex(session: *Session, index: usize) usize {
+    if (session.label.list.items.len == 0) return 0;
+    return @min(index, session.label.list.items.len - 1);
+}
+
+// Function purpose: Resolve a saved session key -- see SavedUsers.User for the
+// format -- to a position in the current session list.
+//
+// Deliberately not findSessionByName, which is for names a person typed into
+// `auto_session` and so matches generously: file_name, Name, the first
+// DesktopNames entry, and the whole DesktopNames string, case-insensitively,
+// returning the first entry that matches on any of them. That is right for
+// configuration and wrong here. The key is written from file_name and the
+// session type, so loose matching only creates ways for it to land on a
+// different entry -- one whose Name happens to equal another's file name, say
+// -- which is the failure the key was added to prevent.
+//
+// Matching is exact and case-sensitive, because the stem came from a directory
+// entry and file names on these systems are too.
+// Function purpose: build the save record's session key, or report that this
+// entry cannot have one.
+//
+// The key is "<display server>/<desktop file stem>", which is what
+// findSavedSession below parses back. Null means the entry gets no key and is
+// remembered by its index alone, which is what every entry did before keys
+// existed and is therefore always a safe answer.
+//
+// Three things make it null.
+//
+// An empty file_name: the shell and xinitrc pseudo-entries have no desktop
+// file, and an empty stem would match the wrong one of them on the way back.
+//
+// A stem containing a newline, which is the one that matters. A save record is
+// a single line, so a key carrying the delimiter splits one user's record in
+// two, and the reader then takes the tail as another user's remembered
+// session. This is reachable rather than theoretical: POSIX forbids only NUL
+// and '/' in a path component, so a newline in a desktop file name is legal,
+// and crawl carries the stem through verbatim. A file named
+// "evil\nvictim:3:wayland-pwn.desktop" created on an ordinary filesystem makes
+// one write for "alice" emit
+//
+//     alice:5:wayland/evil
+//     victim:3:wayland-pwn
+//
+// and "victim" acquires a session they never chose. A carriage return is
+// refused with it: it does not split the record here, but it would be carried
+// into whatever next reads this file, and no stem needs one. Colons need no
+// such treatment -- the reader takes the rest of the line for the key, so they
+// survive intact.
+//
+// A stem too long to format, which cannot be represented either.
+fn sessionKey(buffer: []u8, display_server: DisplayServer, file_name: []const u8) ?[]const u8 {
+    if (file_name.len == 0) return null;
+    if (std.mem.indexOfAny(u8, file_name, "\r\n") != null) return null;
+
+    return std.fmt.bufPrint(buffer, "{s}/{s}", .{ @tagName(display_server), file_name }) catch null;
+}
+
+fn findSavedSession(items: anytype, key: []const u8) ?usize {
+    // Action purpose: An empty key matches nothing. The shell and xinitrc
+    // pseudo-entries have no desktop file and so carry an empty file_name, and
+    // an empty needle would otherwise select whichever of them comes first.
+    // Nothing writes an empty key, and the reader turns an empty third field
+    // into null, so this is a guard rather than a path -- but a silent wrong
+    // selection is not worth leaving to those two facts holding forever.
+    if (key.len == 0) return null;
+
+    // Action purpose: Split the type tag from the stem. A key with no '/' is a
+    // bare stem from an earlier build; a tag this build does not recognise is
+    // treated the same way, matching on the stem alone rather than refusing.
+    const separator = std.mem.indexOfScalar(u8, key, '/');
+    const wanted_server: ?DisplayServer = if (separator) |at|
+        std.meta.stringToEnum(DisplayServer, key[0..at])
+    else
+        null;
+    const wanted_stem = if (separator) |at| key[at + 1 ..] else key;
+    if (wanted_stem.len == 0) return null;
+
+    for (items, 0..) |item, i| {
+        if (!std.mem.eql(u8, item.environment.file_name, wanted_stem)) continue;
+        if (wanted_server) |server| if (item.environment.display_server != server) continue;
+        return i;
+    }
+    return null;
 }
 
 fn findSessionByName(session: *Session, name: []const u8) ?usize {
@@ -2751,4 +3108,271 @@ test {
     // Pulls in every module this file imports so their tests are discovered;
     // Zig skips analysing container-level imports that nothing references.
     std.testing.refAllDecls(@This());
+}
+
+test "a whole-line comment is dropped, a mid-line # is kept" {
+    const allocator = std.testing.allocator;
+
+    const stripped = try stripEntryComments(allocator,
+        \\# a comment
+        \\   # an indented comment
+        \\Name=Thing
+        \\Exec=/usr/bin/thing --bg=#1e1e2e
+    );
+    defer allocator.free(stripped);
+
+    try std.testing.expectEqualStrings(
+        \\Name=Thing
+        \\Exec=/usr/bin/thing --bg=#1e1e2e
+        \\
+    , stripped);
+}
+
+test "a # inside a value survives parsing" {
+    const allocator = std.testing.allocator;
+
+    // Both of these used to be truncated at the "#": the Exec line lost its
+    // colour and the Name was cut down to "C".
+    var entry_ini = Ini(Entry).init(allocator);
+    defer entry_ini.deinit();
+
+    const data = try parseEntryText(allocator, &entry_ini,
+        \\[Desktop Entry]
+        \\Name=C# Workbench
+        \\Exec=/usr/bin/thing --bg=#1e1e2e
+        \\Type=Application
+    );
+
+    const entry = data.@"Desktop Entry";
+    try std.testing.expectEqualStrings("C# Workbench", entry.Name);
+    try std.testing.expectEqualStrings("/usr/bin/thing --bg=#1e1e2e", entry.Exec);
+}
+
+test "Hidden and NoDisplay are read, and default to unset" {
+    const allocator = std.testing.allocator;
+
+    const Case = struct { text: []const u8, hidden: ?bool, no_display: ?bool };
+    const cases = [_]Case{
+        .{ .text =
+        \\[Desktop Entry]
+        \\Name=Retired
+        \\Exec=/usr/bin/old
+        \\Hidden=true
+        , .hidden = true, .no_display = null },
+        .{ .text =
+        \\[Desktop Entry]
+        \\Name=Helper
+        \\Exec=/usr/bin/helper
+        \\NoDisplay=true
+        , .hidden = null, .no_display = true },
+        .{ .text =
+        \\[Desktop Entry]
+        \\Name=Hikari Sakura
+        \\Exec=dbus-run-session /usr/local/bin/hikari
+        \\DesktopNames=Sakura
+        , .hidden = null, .no_display = null },
+    };
+
+    for (cases) |case| {
+        var entry_ini = Ini(Entry).init(allocator);
+        defer entry_ini.deinit();
+
+        const entry = (try parseEntryText(allocator, &entry_ini, case.text)).@"Desktop Entry";
+        try std.testing.expectEqual(case.hidden, entry.Hidden);
+        try std.testing.expectEqual(case.no_display, entry.NoDisplay);
+    }
+}
+
+test "an unconvertible value fails only its own entry" {
+    const allocator = std.testing.allocator;
+
+    // The Desktop Entry Specification allows only "true" and "false" for a
+    // boolean, so rejecting "True" is correct; crawl() turns this error into a
+    // skip of this one file rather than abandoning the directory.
+    var entry_ini = Ini(Entry).init(allocator);
+    defer entry_ini.deinit();
+
+    try std.testing.expectError(error.InvalidValue, parseEntryText(allocator, &entry_ini,
+        \\[Desktop Entry]
+        \\Name=Some Vendor Session
+        \\Exec=/usr/bin/vendor-session
+        \\Terminal=True
+    ));
+}
+
+test "the shipped hikari-sakura entries parse as expected" {
+    const allocator = std.testing.allocator;
+
+    // The two entries hikari-sakura installs, as they look after its Makefile
+    // rewrites Exec= to an absolute path.
+    var entry_ini = Ini(Entry).init(allocator);
+    defer entry_ini.deinit();
+
+    const wrapper = (try parseEntryText(allocator, &entry_ini,
+        \\[Desktop Entry]
+        \\Name=Hikari
+        \\Comment=Hikari Sakura via the start-hikari session wrapper
+        \\Exec=/usr/local/bin/start-hikari
+        \\Type=Application
+        \\DesktopNames=Sakura
+    )).@"Desktop Entry";
+
+    try std.testing.expectEqualStrings("Hikari", wrapper.Name);
+    try std.testing.expectEqualStrings("/usr/local/bin/start-hikari", wrapper.Exec);
+    try std.testing.expectEqualStrings("Sakura", wrapper.DesktopNames.?);
+    try std.testing.expectEqual(@as(?bool, null), wrapper.Hidden);
+
+    var binary_ini = Ini(Entry).init(allocator);
+    defer binary_ini.deinit();
+
+    const binary = (try parseEntryText(allocator, &binary_ini,
+        \\[Desktop Entry]
+        \\Name=Hikari Sakura
+        \\Comment=FreeBSD focused comprehensive Wayland desktop environment
+        \\Exec=dbus-run-session /usr/local/bin/hikari
+        \\Type=Application
+        \\DesktopNames=Sakura
+    )).@"Desktop Entry";
+
+    try std.testing.expectEqualStrings("Hikari Sakura", binary.Name);
+    try std.testing.expectEqualStrings("dbus-run-session /usr/local/bin/hikari", binary.Exec);
+    try std.testing.expectEqualStrings("Sakura", binary.DesktopNames.?);
+}
+
+test "a save record with a long session name survives the read buffer" {
+    // Test purpose: The save file gained a third field, the session name, and
+    // the reader fails a line that does not fit its buffer rather than
+    // truncating it -- which would abandon every later user's remembered
+    // session. This pins the buffer against the longest record a writer here
+    // can produce: the worst case is a login name, a usize in decimal, two
+    // separators and a desktop file name stem at NAME_MAX.
+    const allocator = std.testing.allocator;
+
+    // The bound the save reader in main() actually uses, not a copy of it, so
+    // that lowering it there fails this test.
+    const read_buffer_len = save_record_max_len;
+
+    var name_bytes: [255]u8 = undefined;
+    @memset(&name_bytes, 'x');
+    const long_name: []const u8 = &name_bytes;
+
+    var user_bytes: [33]u8 = undefined;
+    @memset(&user_bytes, 'a');
+    const long_user: []const u8 = &user_bytes;
+
+    // The key as the writer forms it: a type tag, '/', then the stem.
+    const session_key = try std.fmt.allocPrint(allocator, "wayland/{s}", .{long_name});
+    defer allocator.free(session_key);
+
+    const record = try std.fmt.allocPrint(
+        allocator,
+        "{s}:{d}:{s}",
+        .{ long_user, std.math.maxInt(usize), session_key },
+    );
+    defer allocator.free(record);
+
+    try std.testing.expect(record.len < read_buffer_len);
+
+    // Action purpose: Read it back through the same call the save reader uses,
+    // over the record plus a second line, so that a buffer too small to hold
+    // the first would be caught here instead of silently dropping the second.
+    const contents = try std.fmt.allocPrint(allocator, "{s}\nbob:0:x11/other\n", .{record});
+    defer allocator.free(contents);
+
+    var fixed: std.Io.Reader = .fixed(contents);
+    const first = (try fixed.takeDelimiter('\n')).?;
+    try std.testing.expectEqualStrings(record, first);
+    const second = (try fixed.takeDelimiter('\n')).?;
+    try std.testing.expectEqualStrings("bob:0:x11/other", second);
+
+    // Action purpose: And that it still splits into the three fields, with the
+    // key taken as the remainder so an embedded colon cannot cut it short.
+    var fields = std.mem.splitScalar(u8, first, ':');
+    try std.testing.expectEqualStrings(long_user, fields.next().?);
+    try std.testing.expectEqual(std.math.maxInt(usize), try std.fmt.parseInt(usize, fields.next().?, 10));
+    try std.testing.expectEqualStrings(session_key, fields.rest());
+
+    // Action purpose: And that the key itself splits back into the type tag and
+    // the stem at its first '/', which is how findSavedSession reads it.
+    const separator = std.mem.indexOfScalar(u8, session_key, '/').?;
+    try std.testing.expectEqual(DisplayServer.wayland, std.meta.stringToEnum(DisplayServer, session_key[0..separator]).?);
+    try std.testing.expectEqualStrings(long_name, session_key[separator + 1 ..]);
+}
+
+test "a saved session key is matched by type and stem, with explicit fallbacks" {
+    // Test purpose: The saved key identifies a session across restarts, so each
+    // way it can fail to identify one has to behave deliberately rather than
+    // land on whatever entry happens to be first.
+    const Item = struct { environment: Environment };
+
+    // Two entries sharing a stem across session types -- a hikari.desktop
+    // installed in both the Wayland and the X11 directories -- plus a shell
+    // pseudo-entry, which has no desktop file and so an empty stem.
+    const items = [_]Item{
+        .{ .environment = .{ .file_name = "", .display_server = .shell } },
+        .{ .environment = .{ .file_name = "hikari", .display_server = .wayland } },
+        .{ .environment = .{ .file_name = "hikari", .display_server = .x11 } },
+        .{ .environment = .{ .file_name = "hikari-sakura", .display_server = .wayland } },
+    };
+
+    // The type tag is what separates the two hikari entries.
+    try std.testing.expectEqual(@as(?usize, 1), findSavedSession(&items, "wayland/hikari"));
+    try std.testing.expectEqual(@as(?usize, 2), findSavedSession(&items, "x11/hikari"));
+    try std.testing.expectEqual(@as(?usize, 3), findSavedSession(&items, "wayland/hikari-sakura"));
+
+    // A key written by an older build carries no tag, so it matches on the stem
+    // alone and takes the first of the two -- the pre-existing behaviour, not a
+    // regression, and the reason the tag was added.
+    try std.testing.expectEqual(@as(?usize, 1), findSavedSession(&items, "hikari"));
+
+    // A tag this build does not know degrades to the same stem-only match
+    // rather than refusing outright.
+    try std.testing.expectEqual(@as(?usize, 1), findSavedSession(&items, "mir/hikari"));
+
+    // A stem that is not installed matches nothing, which is what makes the
+    // caller fall back explicitly instead of trusting the saved index.
+    try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, "wayland/gone"));
+    try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, "gone"));
+
+    // The right stem under the wrong type is still a miss.
+    try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, "x11/hikari-sakura"));
+
+    // An empty key, and a key whose stem half is empty, match nothing -- they
+    // must not select the shell pseudo-entry at index 0 by virtue of its empty
+    // file_name.
+    try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, ""));
+    try std.testing.expectEqual(@as(?usize, null), findSavedSession(&items, "wayland/"));
+}
+
+test "sessionKey builds the key a saved session is found by" {
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+
+    try std.testing.expectEqualStrings("wayland/hikari", sessionKey(&buffer, .wayland, "hikari").?);
+    try std.testing.expectEqualStrings("x11/hikari", sessionKey(&buffer, .x11, "hikari").?);
+
+    // A colon is legal in a desktop file name and must survive, because the
+    // reader takes the rest of the line for the key.
+    try std.testing.expectEqualStrings("wayland/od:d", sessionKey(&buffer, .wayland, "od:d").?);
+}
+
+test "sessionKey refuses a stem that would break the record" {
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+
+    // The pseudo-entries, which have no desktop file.
+    try std.testing.expectEqual(@as(?[]const u8, null), sessionKey(&buffer, .shell, ""));
+
+    // A save record is one line. Were this key written, one user's record
+    // would become two and the reader would credit the tail to whoever the
+    // injected line names -- so there must be no key at all.
+    try std.testing.expectEqual(
+        @as(?[]const u8, null),
+        sessionKey(&buffer, .wayland, "evil\nvictim:3:wayland-pwn"),
+    );
+    try std.testing.expectEqual(@as(?[]const u8, null), sessionKey(&buffer, .wayland, "a\rb"));
+    try std.testing.expectEqual(@as(?[]const u8, null), sessionKey(&buffer, .wayland, "\n"));
+
+    // Too long to format is equally unrepresentable.
+    var long: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    @memset(&long, 'a');
+    try std.testing.expectEqual(@as(?[]const u8, null), sessionKey(&buffer, .wayland, &long));
 }

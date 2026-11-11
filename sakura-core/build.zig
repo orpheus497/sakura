@@ -40,8 +40,19 @@ pub fn build(b: *std.Build) void {
     addCImport(b, mod, translate_c, target, optimize, "system_time", "#include <sys/time.h>");
     addCImport(b, mod, translate_c, target, optimize, "time", "#include <time.h>");
 
+    // Action purpose: The other BSDs take the FreeBSD header set, matching the
+    // dispatch in src/interop.zig, so a build on them gets as far as the real
+    // mismatches instead of being stopped here. Untested, and said so once.
     switch (target.result.os.tag) {
-        .freebsd => {
+        .netbsd, .openbsd, .dragonfly => std.debug.print(
+            "warning: sakura-core is using the FreeBSD interop layer for '{t}', which is untested. Console headers are the likely mismatch.\n",
+            .{target.result.os.tag},
+        ),
+        else => {},
+    }
+
+    switch (target.result.os.tag) {
+        .freebsd, .netbsd, .openbsd, .dragonfly => {
             // Action purpose: login_cap.h backs setusercontext(3) and has no
             // Linux counterpart, so it is only pulled in here.
             addCImport(b, mod, translate_c, target, optimize, "pwd",
@@ -82,7 +93,17 @@ pub fn build(b: *std.Build) void {
                 \\#include <asm/ioctls.h>
             );
         },
-        else => @panic("unsupported target"),
+        // Action purpose: A readable message rather than @panic, which buried
+        // the one useful word under a build-runner stack trace. Still fatal:
+        // there is no header set to offer a system that is neither a BSD nor
+        // Linux, and src/interop.zig would refuse it in the same breath.
+        else => {
+            std.debug.print(
+                "error: sakura-core has no C imports for '{t}'; it targets FreeBSD 15.0+, the other BSDs untested, and Linux.\n",
+                .{target.result.os.tag},
+            );
+            std.process.exit(1);
+        },
     }
 
     const mod_tests = b.addTest(.{

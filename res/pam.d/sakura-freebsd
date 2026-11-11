@@ -1,14 +1,25 @@
 #%PAM-1.0
 # Script function and purpose: PAM policy for Sakura's normal login on
-# FreeBSD. It includes the system login stack and names only modules that
-# exist on every supported release.
+# FreeBSD. It defers wholly to the system login stack.
 
-# OpenPAM gained the "-" (non-fatal module) prefix only in FreeBSD 15.0. On
-# 14.3 and earlier an unrecognised facility such as "-session" is a fatal parse
-# error: openpam_configure() fails the entire policy rather than skipping that
-# one line, and nobody can log in. Every module named here must therefore exist
-# on every supported release. The Linux policy is a separate file for exactly
-# this reason -- it depends on that prefix.
+# Deferring to `include login` is the whole policy, and it is deliberate: the
+# base system's own stack is what a console login already uses, so Sakura
+# authenticates by exactly the rules the rest of the machine does, and anything
+# the administrator configures there applies here without being restated.
+#
+# `session include login` is also what provides XDG_RUNTIME_DIR: that stack
+# reaches /etc/pam.d/system, which names pam_xdg(8), and pam_xdg creates
+# /var/run/xdg/$USER and publishes the variable into the PAM environment.
+# Sakura re-exports it, and a Wayland compositor cannot create its socket
+# without it, so this is load-bearing for a graphical session and not merely
+# conventional.
+#
+# Nothing here needs the leading "-" (non-fatal module) prefix, which OpenPAM
+# only understands from FreeBSD 15.0 -- earlier releases fail the entire policy
+# on an unrecognised facility rather than skipping the line. Since 15.0 is the
+# baseline the prefix is available if a future addition wants it. The Linux
+# policy stays a separate file because it names distribution-specific modules
+# that have no FreeBSD counterpart, not because of that prefix.
 auth       include      login
 account    include      login
 password   include      login

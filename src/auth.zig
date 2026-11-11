@@ -44,11 +44,11 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     const pam_tty_str = try interop.ttyDeviceNameZ(&pam_tty_buffer, options.tty);
 
     // Set the XDG environment variables
-    try log_file.info(io, "auth/env", "setting xdg environment variables", .{});
+    log_file.info(io, "auth/env", "setting xdg environment variables", .{});
     try setXdgEnv(allocator, tty_str, current_environment);
 
     // Open the PAM session
-    try log_file.info(io, "auth/pam", "encoding credentials", .{});
+    log_file.info(io, "auth/pam", "encoding credentials", .{});
     const login_z = try allocator.dupeSentinel(u8, login, 0);
     defer allocator.free(login_z);
 
@@ -63,36 +63,36 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     };
     var handle: ?*interop.pam.pam_handle = undefined;
 
-    try log_file.info(io, "auth/pam", "starting session", .{});
+    log_file.info(io, "auth/pam", "starting session", .{});
     var status = interop.pam.pam_start(options.service_name, null, &conv, &handle);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
     defer _ = interop.pam.pam_end(handle, status);
 
     // Set PAM_TTY as the current TTY. This is required in case it isn't being set by another PAM module
-    try log_file.info(io, "auth/pam", "setting tty", .{});
+    log_file.info(io, "auth/pam", "setting tty", .{});
     status = interop.pam.pam_set_item(handle, interop.pam.PAM_TTY, pam_tty_str.ptr);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
 
     // Do the PAM routine
-    try log_file.info(io, "auth/pam", "authenticating", .{});
+    log_file.info(io, "auth/pam", "authenticating", .{});
     status = interop.pam.pam_authenticate(handle, 0);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
 
-    try log_file.info(io, "auth/pam", "validating account", .{});
+    log_file.info(io, "auth/pam", "validating account", .{});
     status = interop.pam.pam_acct_mgmt(handle, 0);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
 
-    try log_file.info(io, "auth/pam", "setting credentials", .{});
+    log_file.info(io, "auth/pam", "setting credentials", .{});
     status = interop.pam.pam_setcred(handle, interop.pam.PAM_ESTABLISH_CRED);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
     defer status = interop.pam.pam_setcred(handle, interop.pam.PAM_DELETE_CRED);
 
-    try log_file.info(io, "auth/pam", "opening session", .{});
+    log_file.info(io, "auth/pam", "opening session", .{});
     status = interop.pam.pam_open_session(handle, 0);
     if (status != interop.pam.PAM_SUCCESS) return pamDiagnose(status);
     defer status = interop.pam.pam_close_session(handle, 0);
 
-    try log_file.info(io, "auth/passwd", "getting struct", .{});
+    log_file.info(io, "auth/passwd", "getting struct", .{});
     var user_entry: interop.UsernameEntry = undefined;
     {
         defer interop.closePasswordDatabase();
@@ -109,7 +109,7 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     // child below still has it on its stack for the whole of startSession(),
     // which is what finally passes the shell to execve().
     var user_shell_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    try log_file.info(io, "auth/passwd", "setting user shell", .{});
+    log_file.info(io, "auth/passwd", "setting user shell", .{});
     if (user_entry.shell == null) try interop.setUserShell(&user_entry, &user_shell_buffer);
 
     // chown & chmod stdin (which is the TTY)
@@ -125,7 +125,7 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
     child_pid = std.posix.system.fork();
     if (child_pid == 0) {
         try log_file.reinit(io);
-        try log_file.info(io, "auth/sys", "starting session", .{});
+        log_file.info(io, "auth/sys", "starting session", .{});
 
         startSession(log_file, allocator, io, options, tty_str, user_entry, handle, current_environment) catch |e| {
             shared_err.writeError(e);
@@ -164,7 +164,7 @@ pub fn authenticate(allocator: std.mem.Allocator, io: std.Io, log_file: *LogFile
 
     try log_file.reinit(io);
 
-    try log_file.info(io, "auth/utmp", "removing utmp entry", .{});
+    log_file.info(io, "auth/utmp", "removing utmp entry", .{});
     removeUtmpEntry(&entry);
 
     if (try shared_err.readError()) |err| return err;
@@ -181,15 +181,15 @@ fn startSession(
     current_environment: Environment,
 ) !void {
     // Set the user's GID & PID
-    try log_file.info(io, "auth/passwd", "setting user context", .{});
+    log_file.info(io, "auth/passwd", "setting user context", .{});
     try interop.setUserContext(allocator, user_entry);
 
     // Set up the environment
-    try log_file.info(io, "auth/env", "setting environment variables", .{});
+    log_file.info(io, "auth/env", "setting environment variables", .{});
     try initEnv(allocator, user_entry, options.path);
 
     // Reset the XDG environment variables
-    try log_file.info(io, "auth/env", "resetting xdg environment variables", .{});
+    log_file.info(io, "auth/env", "resetting xdg environment variables", .{});
     try setXdgEnv(allocator, tty_str, current_environment);
     try setXdgRuntimeDir(allocator, io);
 
@@ -201,7 +201,7 @@ fn startSession(
     for (env_list) |maybe_env_var| {
         if (maybe_env_var) |env_var| {
             const env_var_slice = std.mem.span(env_var);
-            try log_file.info(io, "auth/env", "setting pam environment variable: {s}", .{env_var_slice});
+            log_file.info(io, "auth/env", "setting pam environment variable: {s}", .{env_var_slice});
             try interop.putEnvironmentVariable(env_var_slice);
         }
     }
@@ -210,11 +210,11 @@ fn startSession(
     defer allocator.free(home_z);
 
     // Change to the user's home directory
-    try log_file.info(io, "auth/sys", "changing cwd to user home", .{});
+    log_file.info(io, "auth/sys", "changing cwd to user home", .{});
     if (std.posix.system.chdir(home_z.ptr) < 0) return error.ChangeDirectoryFailed;
 
     // Signal to the session process to give up control on the TTY
-    try log_file.info(io, "auth/sys", "releasing tty", .{});
+    log_file.info(io, "auth/sys", "releasing tty", .{});
     std.posix.kill(options.session_pid, std.posix.SIG.INT) catch return error.TtyControlTransferFailed;
 
     // Execute what the user requested
@@ -224,7 +224,7 @@ fn startSession(
             var vt_buf: [5]u8 = undefined;
             const vt = try std.fmt.bufPrint(&vt_buf, "vt{d}", .{options.x_vt orelse options.tty});
 
-            try log_file.info(io, "auth/x11", "setting vt to {s}", .{vt});
+            log_file.info(io, "auth/x11", "setting vt to {s}", .{vt});
             try executeX11Cmd(log_file, allocator, io, user_entry.shell.?, user_entry.home.?, options, current_environment.cmd orelse "", vt);
         },
     }
@@ -416,7 +416,7 @@ fn createXauthFile(log_file: *LogFile, io: std.Io, pwd: []const u8, buffer: []u8
 
     try std.Io.Dir.cwd().createDirPath(io, trimmed_xauth_dir);
 
-    try log_file.info(io, "auth/x11", "creating xauth file: {s}", .{xauthority});
+    log_file.info(io, "auth/x11", "creating xauth file: {s}", .{xauthority});
 
     const file = try std.Io.Dir.createFileAbsolute(io, xauthority, .{});
     file.close(io);
@@ -450,7 +450,7 @@ fn xauth(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, display_n
         var cmd_buffer: [1024]u8 = undefined;
         const cmd_str = std.fmt.bufPrintSentinel(&cmd_buffer, "{s} add {s} . {s}", .{ options.xauth_cmd, display_name, magic_cookie }, 0) catch std.process.exit(1);
 
-        try log_file.info(io, "auth/x11", "executing: {s} -c {s}", .{ shell, cmd_str });
+        log_file.info(io, "auth/x11", "executing: {s} -c {s}", .{ shell, cmd_str });
         const args = [_:null]?[*:0]const u8{ shell, "-c", cmd_str };
         _ = std.posix.system.execve(shell, &args, std.c.environ);
 
@@ -463,7 +463,7 @@ fn xauth(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, display_n
 
     try log_file.reinit(io);
     if (interop.isError(result) or status != 0) {
-        try log_file.err(
+        log_file.err(
             io,
             "auth/x11",
             "xauth command failed with status: {d}",
@@ -478,31 +478,31 @@ fn xauth(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, display_n
 fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, shell: []const u8, home: []const u8, options: AuthOptions, desktop_cmd: []const u8, vt: []const u8) !void {
     var xauth_buffer: [256]u8 = undefined;
 
-    try log_file.info(io, "auth/x11", "getting free display", .{});
+    log_file.info(io, "auth/x11", "getting free display", .{});
     const display_num = try getFreeDisplay();
     var buf: [4]u8 = undefined;
     const display_name = try std.fmt.bufPrint(&buf, ":{d}", .{display_num});
-    try log_file.info(io, "auth/x11", "got free display: {d}", .{display_num});
+    log_file.info(io, "auth/x11", "got free display: {d}", .{display_num});
 
     const shell_z = try allocator.dupeSentinel(u8, shell, 0);
     defer allocator.free(shell_z);
 
-    try log_file.info(io, "auth/x11", "creating xauth file", .{});
+    log_file.info(io, "auth/x11", "creating xauth file", .{});
     const xauthority = try xauth(log_file, allocator, io, display_name, shell_z, home, &xauth_buffer, options);
 
-    try log_file.info(io, "auth/x11", "starting x server", .{});
+    log_file.info(io, "auth/x11", "starting x server", .{});
     const pid = std.posix.system.fork();
     if (pid == 0) {
         var cmd_buffer: [1024]u8 = undefined;
         const cmd_str = std.fmt.bufPrintSentinel(&cmd_buffer, "{s} {s} {s} -auth {s}", .{ options.x_cmd, display_name, vt, xauthority }, 0) catch std.process.exit(1);
-        try log_file.info(io, "auth/x11", "executing: {s} -c {s} -auth {s}", .{ shell, cmd_str, xauthority });
+        log_file.info(io, "auth/x11", "executing: {s} -c {s} -auth {s}", .{ shell, cmd_str, xauthority });
 
         const args = [_:null]?[*:0]const u8{ shell_z, "-c", cmd_str };
         _ = std.posix.system.execve(shell_z, &args, std.c.environ);
         std.process.exit(1);
     }
 
-    try log_file.info(io, "auth/x11", "waiting for xcb connection", .{});
+    log_file.info(io, "auth/x11", "waiting for xcb connection", .{});
     var ok: c_int = -1;
     var xcb: ?*interop.xcb.xcb_connection_t = null;
     while (ok != 0) {
@@ -515,16 +515,16 @@ fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, s
 
     // X Server detaches from the process.
     // PID can be fetched from /tmp/X{d}.lock
-    try log_file.info(io, "auth/x11", "getting x server pid", .{});
+    log_file.info(io, "auth/x11", "getting x server pid", .{});
     const x_pid = try getXPid(io, display_num);
-    try log_file.info(io, "auth/x11", "got x server pid: {d}", .{x_pid});
+    log_file.info(io, "auth/x11", "got x server pid: {d}", .{x_pid});
 
-    try log_file.info(io, "auth/x11", "launching environment", .{});
+    log_file.info(io, "auth/x11", "launching environment", .{});
     xorg_pid = std.posix.system.fork();
     if (xorg_pid == 0) {
         var cmd_buffer: [1024]u8 = undefined;
         const cmd_str = std.fmt.bufPrintSentinel(&cmd_buffer, "{s} {s} {s}", .{ options.setup_cmd, options.login_cmd orelse "", desktop_cmd }, 0) catch std.process.exit(1);
-        try log_file.info(io, "auth/x11", "executing: {s} -c {s}", .{ shell, cmd_str });
+        log_file.info(io, "auth/x11", "executing: {s} -c {s}", .{ shell, cmd_str });
 
         const args = [_:null]?[*:0]const u8{ shell_z, "-c", cmd_str };
         _ = std.posix.system.execve(shell_z, &args, std.c.environ);
@@ -542,7 +542,7 @@ fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, s
     var xorg_status: c_int = undefined;
     _ = std.posix.system.waitpid(xorg_pid, &xorg_status, 0);
 
-    try log_file.info(io, "auth/x11", "disconnecting xcb", .{});
+    log_file.info(io, "auth/x11", "disconnecting xcb", .{});
     interop.xcb.xcb_disconnect(xcb);
 
     // TODO: Find a more robust way to ensure that X has been terminated (pidfds?)
@@ -555,7 +555,7 @@ fn executeX11Cmd(log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, s
 }
 
 fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.Io, shell: []const u8, options: AuthOptions, is_terminal: bool, exec_cmd: ?[]const u8) !void {
-    try global_log_file.info(io, "auth/sys", "launching wayland/shell/custom session", .{});
+    global_log_file.info(io, "auth/sys", "launching wayland/shell/custom session", .{});
 
     var maybe_log_file: ?std.Io.File = null;
     if (!is_terminal) {
@@ -563,7 +563,7 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
         // we redirect standard output & error or not. That is, we redirect only
         // if it's equal to false (so if it's not running in a TTY).
         if (options.session_log) |log_path| {
-            try global_log_file.info(io, "auth/sys", "setting up stdio & stderr redirection", .{});
+            global_log_file.info(io, "auth/sys", "setting up stdio & stderr redirection", .{});
             maybe_log_file = try redirectStandardStreams(global_log_file, io, log_path, true);
         }
     }
@@ -575,39 +575,365 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
     var cmd_buffer: [1024]u8 = undefined;
     const cmd_str = try std.fmt.bufPrintSentinel(&cmd_buffer, "{s} {s} {s}", .{ options.setup_cmd, options.login_cmd orelse "", exec_cmd orelse shell }, 0);
 
-    try global_log_file.info(io, "auth/sys", "executing: {s} -c {s}", .{ shell, cmd_str });
+    global_log_file.info(io, "auth/sys", "executing: {s} -c {s}", .{ shell, cmd_str });
     const args = [_:null]?[*:0]const u8{ shell_z, "-c", cmd_str };
     _ = std.posix.system.execve(shell_z, &args, std.c.environ);
     return error.CmdExecveFailed;
 }
 
-fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) !std.Io.File {
+// Function purpose: Empty a reused session log, as creating a fresh one would.
+//
+// std.Io.Dir.openFile has no truncate option -- OpenFileOptions carries only
+// `mode` and `allow_directory` -- while createFile truncates by default. So
+// every path below that reuses an existing descriptor instead of creating one
+// has to do this explicitly, or the session would write from offset 0 into a
+// file that still holds a previous session's bytes and leave whatever was
+// longer than the new output dangling past the end of it. The result would be
+// one file holding two sessions spliced together, which is worse than either.
+//
+// Only a regular file is truncated. The descriptor is fstat'ed rather than
+// trusting the earlier path stat, because that one did not follow symlinks and
+// this has to know what the link leads to. ftruncate on a character device
+// fails with EINVAL, so `session_log = /dev/null` would start failing logins
+// again without this check.
+fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, session_log: []const u8) !void {
+    const stat = file.stat(io) catch |err| {
+        global_log_file.err(io, "auth/sys", "failed to stat the opened session log file: {s}", .{@errorName(err)});
+        return err;
+    };
+    if (stat.kind != .file) return;
+
+    file.setLength(io, 0) catch |err| {
+        global_log_file.err(io, "auth/sys", "failed to empty the session log '{s}': {s}", .{ session_log, @errorName(err) });
+        return err;
+    };
+}
+
+/// Opens the configured session log and hands back a descriptor whose contents
+/// only the owning user can read, or null if it cannot.
+///
+/// Null is not an error path, it is the other half of the contract: logging is
+/// auxiliary, so nothing here is worth failing a login over. Every reason this
+/// can fail -- the path cannot be inspected, the directory cannot be made or
+/// written, the filesystem or its inodes are full, a quota or resource limit is
+/// hit, an existing file cannot be made private, the replacement cannot be put
+/// in place -- ends the same way: say so in the system log, return null, and let
+/// the session start with its streams untouched. Enumerating the errnos that
+/// deserve that treatment would only invite the next one to be missed.
+///
+/// The return type carries that promise rather than describing it. There is no
+/// error union, so the compiler, not this comment, is what guarantees a login
+/// cannot be denied by anything in here: a `try` added later will not build.
+///
+/// That hole is worth naming, because the words above were already here while
+/// it was open. Every acquisition failure did return null, but each one then
+/// reported itself with a `try`ed write to the system log -- and those writes
+/// could fail, on a full filesystem or on a message too long for the syslog
+/// buffer. So the login was denied not by the failure but by the attempt to
+/// describe it, which is the one outcome this contract exists to prevent.
+/// LogFile.info and LogFile.err now return void for exactly that reason.
+///
+/// The one thing this must never do is hand back a descriptor it cannot
+/// vouch for. Degrading is always safe in that respect, because null means no
+/// redirection happens at all.
+///
+/// The session's standard output *and* standard error are pointed at whatever
+/// this returns, so the file holds everything a session says when it goes
+/// wrong: paths, command lines, occasionally a token in a diagnostic. It sits
+/// under the user's home, which is mode 0755 by default and therefore
+/// searchable by anyone, so the mode of the file itself is the only thing
+/// keeping other local accounts out of it.
+///
+/// Situations have to be told apart, because the correct handling of each is
+/// different and doing the wrong one is worse than doing nothing.
+///
+/// The path is missing, or is a regular file at any mode. A fresh file is
+/// created with O_CREAT|O_EXCL at mode 0600 under a staging name and renamed
+/// into place, so the log is private from the instant it exists and the inode
+/// is never one that existed before this session.
+///
+/// The inode is replaced even when the existing file is already 0600, which is
+/// not redundant: a mode describes a file now and says nothing about its
+/// history. POSIX checks permissions at open(2) and never again, so a log that
+/// spent any time readable -- it was 0644 before this was fixed, and an earlier
+/// version of this very function corrected such a file in place -- can be 0600
+/// today while another process still holds a readable descriptor on it from
+/// before. Reading the mode cannot tell the two apart, so the only sound answer
+/// is not to reuse the inode at all.
+///
+/// The cost of that is real and worth stating: two sessions for the same user
+/// starting at once each rename their own staging file onto this one path, and
+/// the second unlinks the first's, leaving that session writing to an inode no
+/// longer reachable by name. One fixed path cannot both guarantee a fresh inode
+/// per session and keep every concurrent session's log reachable -- there is one
+/// name and one inode behind it. Privacy wins here; a per-session path is the
+/// only way to have both, and that is a change to where the log lives.
+///
+/// Note what O_EXCL does and does not cover here: it guards the *staging* name,
+/// so nothing planted there is opened or followed. The destination is installed
+/// by rename(2), which replaces whatever sits at that path rather than failing,
+/// so something appearing there between the stat above and the rename is simply
+/// replaced. That is still safe for the thing that matters -- no session output
+/// ever travels through a planted symlink, because every write goes to the
+/// descriptor from the exclusive create -- but it is not O_EXCL doing it, and
+/// the path is not reserved in the interval.
+///
+/// rename(2) is atomic, so there is no instant at which the live log is
+/// readable by others, and any descriptor held on the old file is stranded on
+/// an inode that from then on receives nothing. No history is lost by
+/// replacing, because opening the log always truncated it.
+///
+/// The directory holding the log cannot be written, so no staging file can be
+/// made beside it and the replacement is impossible. This returns null: no
+/// redirection happens, the session's streams are left pointing wherever they
+/// already pointed, and the login proceeds.
+///
+/// To be exact about what that does and does not buy: nothing is written to the
+/// configured path, so the file whose exposure could not be established gains
+/// none of this session's output. The session does still write to the stdout
+/// and stderr it inherited, and their exposure is whatever it already was --
+/// unchanged by this decision, since declining to redirect leaves them exactly
+/// as the caller handed them over.
+///
+/// Where that is depends on how Sakura was started, so it is worth saying what
+/// is actually known rather than assuming. Every launch path this repository
+/// ships puts those streams on a virtual terminal: res/sakura.service sets
+/// StandardInput=tty and StandardOutput=tty with TTYPath, and starts Sakura
+/// through agetty; res/sakura-dinit and res/sakura-sysvinit redirect all three
+/// descriptors at the terminal explicitly; res/sakura-runit-service/run,
+/// res/sakura-s6/run and res/sakura-openrc exec getty or agetty, which opens
+/// the terminal and hands it over as stdin, stdout and stderr; and
+/// res/sakura.ttys does the same through FreeBSD's getty. None routes output to
+/// a shared journal or file. A launcher written by hand could, and then the
+/// exposure is that launcher's, not this function's.
+///
+/// So the claim here is the narrow one: this choice adds no exposure. It does
+/// not make the session's output private.
+///
+/// Reusing the file that is there would be wrong even at mode 0600, and the
+/// argument for reuse is worth refuting explicitly because it is easy to make.
+/// Not being able to write the directory does establish that no unprivileged
+/// account put the file there -- only root could have. But that is a fact about
+/// who created it, not about what mode it has ever carried. Root may have
+/// created it 0644 under a default umask, any local account could have opened
+/// it for reading while it was, and a later chmod to 0600 neither closes that
+/// descriptor nor leaves any trace of having happened. Provenance is not
+/// history.
+///
+/// Refusing the login instead is the other option and is worse: it denies
+/// service to protect output that does not have to be written at all.
+///
+/// The path is anything else: a device, a fifo, a socket, or a symlink to one.
+/// It is opened as given and its mode is left strictly alone.
+/// `session_log = /dev/null` is the case that matters, and it is a reasonable
+/// thing for someone to write even though `session_log = null` is the
+/// documented way to turn the log off. chmod on /dev/null fails outright for a
+/// normal user, which would abort an otherwise fine login; for a root login it
+/// would succeed, leaving /dev/null at mode 0600 and breaking every other
+/// process on the machine. Nothing is stored in objects like these, so there is
+/// nothing to protect. Two corollaries, stated plainly because they are choices
+/// and not oversights. A log reached through a symlink gets neither guarantee
+/// this function otherwise provides: not the 0600 mode, since the link's target
+/// is left exactly as it is, and not the fresh inode, since the link is
+/// followed and the target truncated in place rather than replaced. Whoever
+/// pointed the log somewhere else owns both properties of that path.
+fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) ?std.Io.File {
+    const cwd = std.Io.Dir.cwd();
+
+    // Action purpose: Classify the path before touching it. follow_symlinks is
+    // false so that a symlink is reported as a symlink rather than as whatever
+    // it points at -- the decision below turns on what sits at this path, not
+    // on what it leads to.
+    const existing: ?std.Io.File.Stat = stat: {
+        const stat = cwd.statFile(io, session_log, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => break :stat null,
+            else => {
+                global_log_file.err(io, "auth/sys", "cannot inspect the session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+                return null;
+            },
+        };
+        break :stat stat;
+    };
+
+    if (existing) |stat| {
+        // Action purpose: Not a regular file. Open it and change nothing.
+        if (stat.kind != .file) {
+            const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
+                global_log_file.err(io, "auth/sys", "cannot open the session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+                return null;
+            };
+            global_log_file.info(
+                io,
+                "auth/sys",
+                "session log '{s}' is a {s}, not a regular file; opening it as-is and leaving its permissions alone",
+                .{ session_log, @tagName(stat.kind) },
+            );
+
+            // Action purpose: Only when producing a log, matching what creating
+            // one would have done. A caller that asked to reuse an existing log
+            // is asking for its contents to stay.
+            if (create) truncateReusedLog(global_log_file, io, file, session_log) catch {
+                file.close(io);
+                return null;
+            };
+
+            return file;
+        }
+    }
+
+    // Action purpose: The caller asked to reuse an existing log rather than
+    // produce one. Replacing it would be creating a file, which is precisely
+    // what this flag withholds, so the mode is corrected in place instead --
+    // worth doing even though it cannot close the descriptor hole described
+    // above.
+    if (!create) {
+        const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
+            global_log_file.err(io, "auth/sys", "cannot open the existing session log '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+            return null;
+        };
+        file.setPermissions(io, .fromMode(0o600)) catch |err| {
+            global_log_file.err(io, "auth/sys", "cannot restrict the session log '{s}' to mode 0600 ({s}); continuing without one rather than writing to it", .{ session_log, @errorName(err) });
+            file.close(io);
+            return null;
+        };
+        return file;
+    }
+
+    // Action purpose: Build the staging name next to the target, so that the
+    // rename below stays within one filesystem and is therefore atomic. The pid
+    // is in the name because two sessions for the same user can start at once,
+    // and O_EXCL would otherwise make the second one fail.
+    var staging_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const staging_path = std.fmt.bufPrint(
+        &staging_buffer,
+        "{s}.{d}.new",
+        .{ session_log, std.c.getpid() },
+    ) catch |err| {
+        global_log_file.err(io, "auth/sys", "session log path '{s}' is too long to stage a replacement beside ({s}); continuing without a log", .{ session_log, @errorName(err) });
+        return null;
+    };
+
+    const file = cwd.createFile(io, staging_path, .{
+        .exclusive = true,
+        .permissions = .fromMode(0o600),
+    }) catch |err| switch (err) {
+        // Action purpose: The directory cannot be written, so no fresh inode
+        // can be made beside the log and the replacement above is impossible.
+        // Give up on logging rather than write the session's output anywhere
+        // whose exposure is unknown, and return null so the caller leaves the
+        // streams alone and the login still proceeds.
+        //
+        // Reusing the existing file instead would be wrong even when it is
+        // already mode 0600, and the reason is worth keeping written down
+        // because it is easy to argue past. Not being able to write the
+        // directory does say that no unprivileged account placed the file
+        // there, only root -- but that is a fact about who created it, not
+        // about what mode it has ever had. Root may well have created it 0644
+        // under a default umask, any local account could have opened it for
+        // reading while it was, and a later chmod to 0600 neither closes that
+        // descriptor nor leaves any trace. The mode says nothing about the
+        // past here any more than it does anywhere else.
+        //
+        // Refusing the login outright would be the other option, and is worse:
+        // it denies service to protect data that simply does not have to be
+        // written here. Not redirecting adds no exposure -- the configured path
+        // receives nothing -- and leaves the session working, which is also
+        // what `session_log = null` already does by choice. It does not make
+        // the session's output private: that output goes to the inherited
+        // stdout and stderr, as unredirected output always has.
+        error.AccessDenied, error.PermissionDenied => {
+            global_log_file.err(
+                io,
+                "auth/sys",
+                "cannot create a private session log: replacing '{s}' needs write permission on the directory holding it, which this user does not have, and an existing file there cannot be shown never to have been readable. Continuing without a session log. Make that directory writable to get one back, or set session_log = null to ask for this deliberately",
+                .{session_log},
+            );
+            return null;
+        },
+        // Action purpose: Anything else -- a full filesystem or exhausted
+        // inodes (NoSpaceLeft), a quota, a resource limit -- is the same
+        // situation wearing a different errno: no private log can be made here.
+        // Enumerating them would only invite the next one to be missed, so the
+        // whole class degrades the same way.
+        else => {
+            global_log_file.err(io, "auth/sys", "cannot create a private session log beside '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+            return null;
+        },
+    };
+
+    // Action purpose: Move it onto the configured path. On failure the staging
+    // file is removed rather than left behind, since nothing else will ever
+    // look at it.
+    //
+    // The descriptor is closed and the staging file unlinked before the
+    // diagnostic, so that releasing them depends on nothing above it. Logging
+    // can no longer fail, so this is no longer load-bearing -- it was, while
+    // err() returned an error union, because a failed diagnostic skipped both
+    // and stranded a 0600 file called <session_log>.<pid>.new in the user's
+    // home forever. Keeping the order makes the independence explicit rather
+    // than resting it on a property of another function.
+    cwd.rename(staging_path, cwd, session_log, io) catch |err| {
+        file.close(io);
+        cwd.deleteFile(io, staging_path) catch {};
+        global_log_file.err(io, "auth/sys", "cannot put the new session log at '{s}' ({s}); continuing without one", .{ session_log, @errorName(err) });
+        return null;
+    };
+
+    return file;
+}
+
+fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) !?std.Io.File {
     create_session_log_dir: {
         const session_log_dir = std.Io.Dir.path.dirname(session_log) orelse break :create_session_log_dir;
 
         var buffer = std.mem.zeroes([std.Io.Dir.max_path_bytes]u8);
         const len = std.Io.Dir.cwd().realPathFile(io, session_log_dir, &buffer) catch |err| {
-            try global_log_file.err(io, "auth/sys", "failed to resolve path for session log file directory: {s}", .{@errorName(err)});
-            return err;
+            global_log_file.err(io, "auth/sys", "cannot resolve the session log directory '{s}' ({s}); continuing without a log", .{ session_log_dir, @errorName(err) });
+            return null;
         };
         const resolved_path = buffer[0..len];
 
         std.Io.Dir.cwd().createDirPath(io, resolved_path) catch |err| {
-            try global_log_file.err(io, "auth/sys", "failed to create session log file directory: {s}", .{@errorName(err)});
-            return err;
+            global_log_file.err(io, "auth/sys", "cannot create the session log directory '{s}' ({s}); continuing without a log", .{ resolved_path, @errorName(err) });
+            return null;
         };
     }
 
-    const log_file = if (create) (std.Io.Dir.cwd().createFile(io, session_log, .{ .permissions = .fromMode(0o666) }) catch |err| {
-        try global_log_file.err(io, "auth/sys", "failed to create new session log file: {s}", .{@errorName(err)});
-        return err;
-    }) else (std.Io.Dir.cwd().openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
-        try global_log_file.err(io, "auth/sys", "failed to open existing session log file: {s}", .{@errorName(err)});
-        return err;
-    });
+    // Action purpose: Obtain the descriptor. All of the care about who can read
+    // the result lives in openSessionLog, immediately above.
+    //
+    // null means it could not produce one that is private, and has said why.
+    // The streams are then left pointing where they already point and the
+    // session runs without a log, which is a state the configuration supports
+    // on purpose via `session_log = null`.
+    const log_file = openSessionLog(global_log_file, io, session_log, create) orelse return null;
 
-    if (interop.isError(std.posix.system.dup2(std.posix.STDOUT_FILENO, std.posix.STDERR_FILENO))) return error.StdoutDup2Failed;
-    if (interop.isError(std.posix.system.dup2(log_file.handle, std.posix.STDOUT_FILENO))) return error.LogFileDup2Failed;
+    // Action purpose: Send both of the session's streams to the log file, which
+    // is what res/config.ini promises of it ("stdout and stderr of Wayland
+    // sessions") and what the caller's own comment describes.
+    //
+    // The order used to be the other way round: the inherited stdout was
+    // dup2'd onto stderr first, and only then the log file onto stdout. That
+    // left stderr pointing at the virtual terminal Sakura itself was handed, so
+    // the log caught stdout alone -- and stderr is where almost everything
+    // worth reading goes. wlroots, and therefore every compositor built on it,
+    // logs exclusively to stderr, so a compositor's startup failures and crash
+    // output never reached the file the user is told to look in, and were
+    // painted over by the compositor taking the terminal moments later.
+    //
+    // Both descriptors are pointed at the log file directly rather than
+    // chained through one another, so neither line depends on the other having
+    // run first.
+    // Action purpose: These two stay fatal, unlike every failure to obtain the
+    // log above, and the difference is not an oversight. Not getting a log
+    // leaves the session exactly as it would have been without one, which is a
+    // supported state. A dup2 that fails partway does not: the first call can
+    // succeed and the second fail, leaving standard output on the log and
+    // standard error still on the terminal, which is neither of the two states
+    // this function is meant to produce. There is nothing to degrade to from
+    // there, so it is reported.
+    if (interop.isError(std.posix.system.dup2(log_file.handle, std.posix.STDOUT_FILENO))) return error.StdoutDup2Failed;
+    if (interop.isError(std.posix.system.dup2(log_file.handle, std.posix.STDERR_FILENO))) return error.StderrDup2Failed;
 
     return log_file;
 }

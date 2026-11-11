@@ -163,11 +163,11 @@ pub fn init(
 ) !Gif {
     var movie = decoder.open(allocator, io, file_path) catch |err| {
         switch (err) {
-            error.FileNotFound => try log_file.err(io, "tui", "gif_file was not found at: {s}", .{file_path}),
-            error.NotAGifFile => try log_file.err(io, "tui", "gif_file is not a GIF: {s}", .{file_path}),
-            error.UnsupportedGifVersion => try log_file.err(io, "tui", "gif_file is not GIF87a or GIF89a: {s}", .{file_path}),
-            error.NoFrames => try log_file.err(io, "tui", "gif_file contains no frames: {s}", .{file_path}),
-            else => try log_file.err(io, "tui", "failed to read gif_file {s}: {s}", .{ file_path, @errorName(err) }),
+            error.FileNotFound => log_file.err(io, "tui", "gif_file was not found at: {s}", .{file_path}),
+            error.NotAGifFile => log_file.err(io, "tui", "gif_file is not a GIF: {s}", .{file_path}),
+            error.UnsupportedGifVersion => log_file.err(io, "tui", "gif_file is not GIF87a or GIF89a: {s}", .{file_path}),
+            error.NoFrames => log_file.err(io, "tui", "gif_file contains no frames: {s}", .{file_path}),
+            else => log_file.err(io, "tui", "failed to read gif_file {s}: {s}", .{ file_path, @errorName(err) }),
         }
         return err;
     };
@@ -635,7 +635,7 @@ fn update(self: *Gif, _: *anyopaque) !void {
         self.layout.rows != self.terminal_buffer.height)
     {
         self.rebuild() catch |err| {
-            try self.log_file.err(self.io, "tui", "failed to lay out the gif wallpaper: {s}", .{@errorName(err)});
+            self.log_file.err(self.io, "tui", "failed to lay out the gif wallpaper: {s}", .{@errorName(err)});
             self.failed = true;
             self.animate.* = false;
             return;
@@ -654,7 +654,7 @@ fn update(self: *Gif, _: *anyopaque) !void {
     self.ensureCached(next) catch |err| {
         // A broken stream shouldn't take the greeter down with it; stop
         // animating and leave whatever is on screen.
-        try self.log_file.err(self.io, "tui", "failed to render gif frame {d}: {s}", .{ next, @errorName(err) });
+        self.log_file.err(self.io, "tui", "failed to render gif frame {d}: {s}", .{ next, @errorName(err) });
         self.failed = true;
         self.animate.* = false;
         return;

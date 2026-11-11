@@ -384,11 +384,11 @@ pub fn init(
 
     dur_movie_raw.createFromFile(allocator, io, file_path) catch |err| switch (err) {
         error.FileNotFound => {
-            try log_file.err(io, "tui", "dur_file was not found at: {s}", .{file_path});
+            log_file.err(io, "tui", "dur_file was not found at: {s}", .{file_path});
             return err;
         },
         error.NotValidFile => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid or not a dur file!", .{});
+            log_file.err(io, "tui", "dur_file loaded was invalid or not a dur file!", .{});
             return err;
         },
         else => return err,
@@ -396,58 +396,58 @@ pub fn init(
 
     var dur_movie = dur_movie_raw.validate() catch |err| switch (err) {
         error.MissingFieldVersion => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: missing field formatVersion!", .{});
+            log_file.err(io, "tui", "dur_file loaded was invalid: missing field formatVersion!", .{});
             return err;
         },
         error.UnsupportedVersion => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: unsupported version ({d})!", .{dur_movie_raw.formatVersion.?});
+            log_file.err(io, "tui", "dur_file loaded was invalid: unsupported version ({d})!", .{dur_movie_raw.formatVersion.?});
             return err;
         },
         error.MissingFieldColorFormat => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: missing field colorFormat!", .{});
+            log_file.err(io, "tui", "dur_file loaded was invalid: missing field colorFormat!", .{});
             return err;
         },
         error.UnsupportedColorFormat => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: unsupported colorFormat ({s})!", .{dur_movie_raw.colorFormat.?});
+            log_file.err(io, "tui", "dur_file loaded was invalid: unsupported colorFormat ({s})!", .{dur_movie_raw.colorFormat.?});
             return err;
         },
         error.MissingFieldEncoding => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: missing field encoding!", .{});
+            log_file.err(io, "tui", "dur_file loaded was invalid: missing field encoding!", .{});
             return err;
         },
         error.UnsupportedEncoding => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: unsupported encoding ({s})!", .{dur_movie_raw.encoding.?});
+            log_file.err(io, "tui", "dur_file loaded was invalid: unsupported encoding ({s})!", .{dur_movie_raw.encoding.?});
             return err;
         },
         error.MissingFieldFramerate => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: missing field framerate!", .{});
+            log_file.err(io, "tui", "dur_file loaded was invalid: missing field framerate!", .{});
             return err;
         },
         error.InvalidFramerate => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: negative framerate value found!", .{});
+            log_file.err(io, "tui", "dur_file loaded was invalid: negative framerate value found!", .{});
             return err;
         },
         error.MissingDimensions => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: missing field(s) lines and/or columns!", .{});
+            log_file.err(io, "tui", "dur_file loaded was invalid: missing field(s) lines and/or columns!", .{});
             return err;
         },
         error.InvalidColumnCount => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: columns value falls outside of supported range ({d})!", .{dur_movie_raw.columns.?});
+            log_file.err(io, "tui", "dur_file loaded was invalid: columns value falls outside of supported range ({d})!", .{dur_movie_raw.columns.?});
             return err;
         },
         error.InvalidLineCount => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: lines value falls outside of supported range ({d})!", .{dur_movie_raw.lines.?});
+            log_file.err(io, "tui", "dur_file loaded was invalid: lines value falls outside of supported range ({d})!", .{dur_movie_raw.lines.?});
             return err;
         },
         error.NoFrames => {
-            try log_file.err(io, "tui", "dur_file loaded was invalid: animation has no frames!", .{});
+            log_file.err(io, "tui", "dur_file loaded was invalid: animation has no frames!", .{});
             return err;
         },
     };
 
     // 4 bit mode with 256 color is unsupported
     if (!full_color and dur_movie.colorFormat == .@"256") {
-        try log_file.err(io, "tui", "dur_file can not be 256 color encoded when not using full_color option!", .{});
+        log_file.err(io, "tui", "dur_file can not be 256 color encoded when not using full_color option!", .{});
         dur_movie.deinit();
         return error.NotFullColor;
     }
