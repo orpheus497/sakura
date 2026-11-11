@@ -668,9 +668,22 @@ fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, s
 /// none of this session's output. The session does still write to the stdout
 /// and stderr it inherited, and their exposure is whatever it already was --
 /// unchanged by this decision, since declining to redirect leaves them exactly
-/// as the caller handed them over. Under Sakura that is the console terminal
-/// the login was started on. So the claim here is the narrow one: this choice
-/// adds no exposure. It does not make the session's output private.
+/// as the caller handed them over.
+///
+/// Where that is depends on how Sakura was started, so it is worth saying what
+/// is actually known rather than assuming. Every launch path this repository
+/// ships puts those streams on a virtual terminal: res/sakura.service sets
+/// StandardInput=tty and StandardOutput=tty with TTYPath, and starts Sakura
+/// through agetty; res/sakura-dinit and res/sakura-sysvinit redirect all three
+/// descriptors at the terminal explicitly; res/sakura-runit-service/run,
+/// res/sakura-s6/run and res/sakura-openrc exec getty or agetty, which opens
+/// the terminal and hands it over as stdin, stdout and stderr; and
+/// res/sakura.ttys does the same through FreeBSD's getty. None routes output to
+/// a shared journal or file. A launcher written by hand could, and then the
+/// exposure is that launcher's, not this function's.
+///
+/// So the claim here is the narrow one: this choice adds no exposure. It does
+/// not make the session's output private.
 ///
 /// Reusing the file that is there would be wrong even at mode 0600, and the
 /// argument for reuse is worth refuting explicitly because it is easy to make.
