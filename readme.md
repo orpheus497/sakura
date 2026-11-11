@@ -1255,10 +1255,20 @@ by the time either entry runs.
 `start-hikari` creates a runtime directory when nothing else did, checks it is
 owned by you and mode `0700`, warns if it sits on ZFS, and clears any
 `WAYLAND_DISPLAY` or `DISPLAY` leaked in from the parent. The `Hikari Sakura`
-entry does none of those checks and takes the environment as given. Under Sakura
-these are belt-and-braces checks rather than requirements — they matter when
+entry does none of that and takes the environment as given. Under Sakura the
+first three are belt-and-braces rather than requirements — they matter when
 something other than Sakura starts the session, or when the runtime directory is
 on ZFS and you want to be told.
+
+The clearing is the exception, and is worth knowing about even here, because
+wlroots prefers those variables to the hardware. `wlr_backend_autocreate` tests
+`WAYLAND_DISPLAY` and `WAYLAND_SOCKET` before anything else and builds a
+*nested* Wayland backend if either is set, `DISPLAY` does the same for X11, and
+only with none of them set does it reach DRM and libinput — with no fallback
+on either path. Sakura does not export them, so a session started from the login
+screen is unaffected; a compositor started by hand from inside an existing
+graphical session is exactly where it bites, and there the direct entry fails to
+start rather than opening a nested window.
 
 One difference is not a check, and runs the other way. Both entries arrange a
 session message bus, but not on the same terms. `start-hikari` wraps the
