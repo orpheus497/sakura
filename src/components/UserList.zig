@@ -123,6 +123,11 @@ fn handle(self: *UserList, maybe_key: ?keyboard.Key) !void {
 
 fn usernameChanged(user: User, maybe_session: ?*Session) void {
     if (maybe_session) |session| {
+        // Action purpose: `items.len - 1` is an unsigned subtraction, so an
+        // empty session list made this a wrap rather than a clamp -- a panic in
+        // a safe build, and an enormous index in a fast one. An empty list has
+        // no selectable session, so there is nothing to move to.
+        if (session.label.list.items.len == 0) return;
         session.label.current = @min(user.session_index.*, session.label.list.items.len - 1);
     }
 }

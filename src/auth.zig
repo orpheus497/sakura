@@ -581,6 +581,132 @@ fn executeCmd(global_log_file: *LogFile, allocator: std.mem.Allocator, io: std.I
     return error.CmdExecveFailed;
 }
 
+/// Opens the configured session log and hands back a descriptor whose contents
+/// only the owning user can read.
+///
+/// The session's standard output *and* standard error are pointed at whatever
+/// this returns, so the file holds everything a session says when it goes
+/// wrong: paths, command lines, occasionally a token in a diagnostic. It sits
+/// under the user's home, which is mode 0755 by default and therefore
+/// searchable by anyone, so the mode of the file itself is the only thing
+/// keeping other local accounts out of it.
+///
+/// Three situations have to be told apart, because the correct handling of each
+/// is different and doing the wrong one is worse than doing nothing.
+///
+/// The path does not exist yet. Create it with O_CREAT|O_EXCL at mode 0600, so
+/// it is private from the instant it exists and a symlink planted at the path
+/// by another account is refused rather than followed.
+///
+/// The path is a regular file left behind by an earlier session. Its inode is
+/// deliberately NOT reused. A chmod after opening is not sufficient: POSIX
+/// checks permissions at open(2) and never again, so any process that already
+/// holds the old file open -- it was mode 0644 before this was fixed -- keeps
+/// reading through that descriptor no matter what the mode becomes afterwards,
+/// and would be handed this session's output. Instead a fresh 0600 file is
+/// created alongside and renamed onto the path. rename(2) is atomic, so there
+/// is no instant at which the live log is readable by others, and any such
+/// descriptor is stranded on the old inode, which from then on receives
+/// nothing. No history is lost by this, because opening the log always
+/// truncated it.
+///
+/// The path is anything else: a device, a fifo, a socket, or a symlink to one.
+/// It is opened as given and its mode is left strictly alone.
+/// `session_log = /dev/null` is the case that matters, and it is a reasonable
+/// thing for someone to write even though `session_log = null` is the
+/// documented way to turn the log off. chmod on /dev/null fails outright for a
+/// normal user, which would abort an otherwise fine login; for a root login it
+/// would succeed, leaving /dev/null at mode 0600 and breaking every other
+/// process on the machine. Nothing is stored in objects like these, so there is
+/// nothing to protect. The corollary, stated plainly because it is a choice and
+/// not an oversight: a log reached through a symlink does not get the 0600
+/// guarantee. Whoever pointed it somewhere else owns the mode of that path.
+fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) !std.Io.File {
+    const cwd = std.Io.Dir.cwd();
+
+    // Action purpose: Classify the path before touching it. follow_symlinks is
+    // false so that a symlink is reported as a symlink rather than as whatever
+    // it points at -- the decision below turns on what sits at this path, not
+    // on what it leads to.
+    const existing_kind: ?std.Io.File.Kind = kind: {
+        const stat = cwd.statFile(io, session_log, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => break :kind null,
+            else => {
+                try global_log_file.err(io, "auth/sys", "failed to stat session log file: {s}", .{@errorName(err)});
+                return err;
+            },
+        };
+        break :kind stat.kind;
+    };
+
+    // Action purpose: Not a regular file. Open it and change nothing about it.
+    if (existing_kind) |kind| if (kind != .file) {
+        const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
+            try global_log_file.err(io, "auth/sys", "failed to open session log file: {s}", .{@errorName(err)});
+            return err;
+        };
+        try global_log_file.info(
+            io,
+            "auth/sys",
+            "session log '{s}' is a {s}, not a regular file; opening it as-is and leaving its permissions alone",
+            .{ session_log, @tagName(kind) },
+        );
+        return file;
+    };
+
+    // Action purpose: The caller asked to reuse an existing log rather than
+    // produce one. Replacing it would be creating a file, which is precisely
+    // what this flag withholds, so the mode is corrected in place instead --
+    // worth doing even though it cannot close the descriptor hole described
+    // above.
+    if (!create) {
+        const file = cwd.openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
+            try global_log_file.err(io, "auth/sys", "failed to open existing session log file: {s}", .{@errorName(err)});
+            return err;
+        };
+        file.setPermissions(io, .fromMode(0o600)) catch |err| {
+            try global_log_file.err(io, "auth/sys", "failed to restrict session log file permissions: {s}", .{@errorName(err)});
+            file.close(io);
+            return err;
+        };
+        return file;
+    }
+
+    // Action purpose: Build the staging name next to the target, so that the
+    // rename below stays within one filesystem and is therefore atomic. The pid
+    // is in the name because two sessions for the same user can start at once,
+    // and O_EXCL would otherwise make the second one fail.
+    var staging_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const staging_path = std.fmt.bufPrint(
+        &staging_buffer,
+        "{s}.{d}.new",
+        .{ session_log, std.c.getpid() },
+    ) catch |err| {
+        try global_log_file.err(io, "auth/sys", "session log path too long to stage a replacement: {s}", .{@errorName(err)});
+        return err;
+    };
+
+    const file = cwd.createFile(io, staging_path, .{
+        .exclusive = true,
+        .permissions = .fromMode(0o600),
+    }) catch |err| {
+        try global_log_file.err(io, "auth/sys", "failed to create session log file: {s}", .{@errorName(err)});
+        return err;
+    };
+
+    // Action purpose: Move it onto the configured path. On failure the staging
+    // file is removed rather than left behind, since nothing else will ever
+    // look at it.
+    cwd.rename(staging_path, cwd, session_log, io) catch |err| {
+        try global_log_file.err(io, "auth/sys", "failed to put the new session log in place: {s}", .{@errorName(err)});
+        file.close(io);
+        cwd.deleteFile(io, staging_path) catch {};
+        return err;
+    };
+
+    return file;
+}
+
 fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: []const u8, create: bool) !std.Io.File {
     create_session_log_dir: {
         const session_log_dir = std.Io.Dir.path.dirname(session_log) orelse break :create_session_log_dir;
@@ -598,35 +724,9 @@ fn redirectStandardStreams(global_log_file: *LogFile, io: std.Io, session_log: [
         };
     }
 
-    // Action purpose: 0600, not 0666. This file now receives the session's
-    // standard error as well as its standard output, so it holds whatever a
-    // session writes when something goes wrong -- paths, command lines,
-    // occasionally a token in a diagnostic. It lives under the user's home,
-    // which is mode 0755 by default and therefore searchable, so at 0666 minus
-    // the usual 022 umask it was readable by every local account.
-    const log_file = if (create) (std.Io.Dir.cwd().createFile(io, session_log, .{ .permissions = .fromMode(0o600) }) catch |err| {
-        try global_log_file.err(io, "auth/sys", "failed to create new session log file: {s}", .{@errorName(err)});
-        return err;
-    }) else (std.Io.Dir.cwd().openFile(io, session_log, .{ .mode = .read_write }) catch |err| {
-        try global_log_file.err(io, "auth/sys", "failed to open existing session log file: {s}", .{@errorName(err)});
-        return err;
-    });
-
-    // Action purpose: Then chmod it regardless, because the mode passed to
-    // createFile applies only when the file is new -- O_CREAT ignores it for an
-    // existing path. A log left behind by an earlier version would otherwise
-    // keep its 0644 and the mode above would silently fix nothing. Done before
-    // the redirection below so that nothing has been written while the file was
-    // still readable by others.
-    //
-    // Deliberately fatal: the point of the call is that the session's stderr
-    // must not land in a world-readable file, and carrying on after it fails
-    // would do exactly that.
-    log_file.setPermissions(io, .fromMode(0o600)) catch |err| {
-        try global_log_file.err(io, "auth/sys", "failed to restrict session log file permissions: {s}", .{@errorName(err)});
-        log_file.close(io);
-        return err;
-    };
+    // Action purpose: Obtain the descriptor. All of the care about who can read
+    // the result lives in openSessionLog, immediately above.
+    const log_file = try openSessionLog(global_log_file, io, session_log, create);
 
     // Action purpose: Send both of the session's streams to the log file, which
     // is what res/config.ini promises of it ("stdout and stderr of Wayland

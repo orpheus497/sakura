@@ -383,11 +383,20 @@ pub fn main(init: std.process.Init) !void {
 
             const session_index = std.fmt.parseInt(usize, session_index_str, 10) catch continue;
 
+            // Action purpose: Read the session name, which newer save files
+            // carry as a third field. rest() rather than next() because a
+            // desktop file name is allowed to contain a colon, and taking the
+            // remainder of the line keeps such a name in one piece. A file
+            // written by an older version simply has nothing here, which is why
+            // the index is still read and still used as the fallback.
+            const session_name = user.rest();
+
             try state.saved_users.user_list.append(state.allocator, .{
                 .username = try state.allocator.dupe(u8, username),
                 .session_index = session_index,
                 .first_run = false,
                 .allocated_username = true,
+                .session_name = if (session_name.len > 0) try state.allocator.dupe(u8, session_name) else null,
             });
         }
     }
@@ -911,6 +920,54 @@ pub fn main(init: std.process.Init) !void {
         );
     }
 
+    // Action purpose: Now that the session list is final, turn each saved
+    // session name back into a position in it. Everything downstream keeps
+    // working in indices -- UserList holds a pointer to each of these, so
+    // correcting the number here is seen everywhere it is later applied -- and
+    // the index read from the file remains the fallback for an entry that has
+    // no name, or whose name no longer matches anything installed.
+    for (state.saved_users.user_list.items) |*user| {
+        const session_name = user.session_name orelse continue;
+        if (findSessionByName(&state.session, session_name)) |index| {
+            user.session_index = index;
+        } else {
+            try state.log_file.info(
+                state.io,
+                "conf",
+                "saved session '{s}' for user '{s}' is not in the session list; falling back to the saved position",
+                .{ session_name, user.username },
+            );
+        }
+    }
+
+    // Action purpose: Report having nothing to log into, in the same shape as
+    // the no-users case below. Reachable in two ways: a sessions directory with
+    // nothing in it, which has always been possible, and every installed entry
+    // asking not to be listed via Hidden or NoDisplay, which became possible
+    // when those keys started being honoured. Both leave the list empty, and
+    // every site that reads the current selection has to tolerate that --
+    // authenticate() refuses outright rather than indexing nothing.
+    //
+    // err_crawl is reused deliberately rather than a new string being added:
+    // tools/check_invariants.py requires every key in Lang.zig to be present in
+    // all 25 locale files, and inserting untranslated English into each of them
+    // to describe this case would be worse than reusing the message already
+    // shown when the session search comes up short. The precise reason goes to
+    // the log, which is not translated.
+    if (state.session.label.list.items.len == 0) {
+        try state.info_line.addMessage(
+            state.lang.err_crawl,
+            state.config.error_bg,
+            state.config.error_fg,
+        );
+        try state.log_file.err(
+            state.io,
+            "sys",
+            "no selectable session: every entry was absent, hidden (Hidden=true or NoDisplay=true), or unreadable, and no shell or x11 fallback is enabled",
+            .{},
+        );
+    }
+
     if (usernames.items.len == 0) {
         // If we have no usernames, simply add an error to the info line.
         // This effectively means you can't login, since there would be no local
@@ -1246,7 +1303,7 @@ pub fn main(init: std.process.Init) !void {
 
                 for (state.saved_users.user_list.items) |user| {
                     if (std.mem.eql(u8, username, user.username)) {
-                        state.session.label.current = @min(user.session_index, state.session.label.list.items.len - 1);
+                        state.session.label.current = clampSessionIndex(&state.session, user.session_index);
                         break;
                     }
                 }
@@ -1268,7 +1325,7 @@ pub fn main(init: std.process.Init) !void {
 
             default_input = .password;
 
-            state.session.label.current = @min(user.session_index, state.session.label.list.items.len - 1);
+            state.session.label.current = clampSessionIndex(&state.session, user.session_index);
         }
     }
 
@@ -1607,6 +1664,22 @@ fn authenticate(ptr: *anyopaque) !bool {
 
     try state.log_file.info(state.io, "auth", "starting authentication", .{});
 
+    // Action purpose: Stop before anything reads the current selection. The
+    // forked child below does `list.items[label.current].environment`
+    // unconditionally, so on an empty list it indexes nothing -- and
+    // authenticating in order to start a session that does not exist is
+    // pointless regardless. The message matches the one shown at startup for
+    // the same condition.
+    if (state.session.label.list.items.len == 0) {
+        try state.info_line.addMessage(
+            state.lang.err_crawl,
+            state.config.error_bg,
+            state.config.error_fg,
+        );
+        try state.log_file.err(state.io, "auth", "refusing to authenticate: no session is selectable", .{});
+        return false;
+    }
+
     if (!state.config.allow_empty_password and state.password.text.items.len == 0) {
         // Let's not log this message for security reasons
         try state.info_line.addMessage(
@@ -1694,8 +1767,34 @@ fn authenticate(ptr: *anyopaque) !bool {
         } else {
             try writer.print("{d}\n", .{state.login.?.label.current});
         }
+        // Action purpose: Write the session's name as a third field, so the
+        // next run can restore the selection by identity rather than by
+        // position. The name comes from the live list, which is what the index
+        // currently refers to; for an index outside it, whatever name was read
+        // at startup is carried through unchanged rather than invented.
+        //
+        // Only crawled entries get a name. The shell and xinitrc pseudo-entries
+        // have no desktop file, so their file_name is empty, and the only other
+        // identity they have is a translated label that would stop matching the
+        // moment the user changed language. They are also added before the
+        // crawl, which puts them at fixed low positions that the filtering
+        // cannot shift -- so for exactly those entries the index is already the
+        // stable identifier, and it is left to do the job alone.
         for (state.saved_users.user_list.items) |user| {
-            try writer.print("{s}:{d}\n", .{ user.username, user.session_index });
+            const session_name: ?[]const u8 = name: {
+                if (user.session_index < state.session.label.list.items.len) {
+                    const file_name = state.session.label.list.items[user.session_index].environment.file_name;
+                    if (file_name.len > 0) break :name file_name;
+                    break :name null;
+                }
+                break :name user.session_name;
+            };
+
+            if (session_name) |name| {
+                try writer.print("{s}:{d}:{s}\n", .{ user.username, user.session_index, name });
+            } else {
+                try writer.print("{s}:{d}\n", .{ user.username, user.session_index });
+            }
         }
         try writer.flush();
 
@@ -2150,6 +2249,15 @@ fn updateBox(self: *Box, ptr: *anyopaque) !void {
 
 fn updateSessionSpecifier(self: *Label, ptr: *anyopaque) !void {
     const state: *UiState = @ptrCast(@alignCast(ptr));
+
+    // Action purpose: This runs from the draw path, where an empty session list
+    // is a state to render rather than an error to raise. There is no
+    // specifier to show, so the field is left blank instead of indexing a list
+    // with no items in it.
+    if (state.session.label.list.items.len == 0) {
+        self.setText("");
+        return;
+    }
 
     const env = state.session.label.list.items[state.session.label.current];
     self.setText(env.environment.specifier);
@@ -2780,6 +2888,18 @@ fn isValidUsername(username: []const u8, usernames: StringList) bool {
         if (std.mem.eql(u8, username, valid_username)) return true;
     }
     return false;
+}
+
+// Function purpose: Bring a saved session position inside the current list.
+//
+// The obvious `@min(index, items.len - 1)` is wrong on an empty list: the
+// subtraction is unsigned, so it wraps instead of clamping, which panics in a
+// safe build and produces an enormous index in a fast one. An empty list has no
+// valid position at all, so 0 is returned and the caller is expected not to
+// index with it -- authenticate() refuses to run in that state.
+fn clampSessionIndex(session: *Session, index: usize) usize {
+    if (session.label.list.items.len == 0) return 0;
+    return @min(index, session.label.list.items.len - 1);
 }
 
 fn findSessionByName(session: *Session, name: []const u8) ?usize {

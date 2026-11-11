@@ -1255,8 +1255,13 @@ Pick whichever you like.
 The difference, if you want one: `start-hikari` creates a runtime directory when
 nothing else did, checks it is owned by you and mode `0700`, warns if it sits on
 ZFS, clears any `WAYLAND_DISPLAY` or `DISPLAY` leaked in from the parent, and
-wraps the compositor in `dbus-run-session` when no session bus is running. The
-`Hikari Sakura` entry does none of that and takes the environment as given. Those
+wraps the compositor in `dbus-run-session` only when no session bus is already
+running. The `Hikari Sakura` entry does none of those checks and takes the
+environment as given — with one exception, which runs the other way. Its `Exec`
+line is `dbus-run-session hikari` with no condition on it, so it always starts a
+*fresh* session bus and replaces `DBUS_SESSION_BUS_ADDRESS`, even when the login
+path already provided one. Anything registered on the earlier bus is then
+invisible to the session, because it is a different bus. Those
 are belt-and-braces checks here, not requirements — they matter when something
 other than Sakura starts the session, or when the runtime directory is on ZFS and
 you want to be told.
@@ -1268,13 +1273,30 @@ hikari-sakura's readme:
 - `kern.evdev.rcpt_mask` must be set (`12`, or `3` if you use `moused`), or
   input devices will not be seen.
 - `XDG_RUNTIME_DIR` must not sit on ZFS. Wayland clients that call
-  `posix_fallocate` fail there with `EINVAL`, ZFS having no `vop_allocate`.
-  Check which path you actually got — `df -T "$XDG_RUNTIME_DIR"` — before
-  applying a fix. Under Sakura it is `pam_xdg`'s `/var/run/xdg/$USER`, which is
-  in the root dataset on a stock ZFS-root install, so backing `/tmp` with
-  `tmpfs` does nothing for it; give that path its own `tmpfs` instead. The
-  `/tmp` advice applies only when `XDG_RUNTIME_DIR` is unset and
-  `start-hikari` is creating `/tmp/hikari-runtime-$UID` itself.
+  `posix_fallocate` fail there: ZFS wires its `vop_allocate` to
+  `VOP_EOPNOTSUPP` on FreeBSD 15, so the call returns `EOPNOTSUPP` (on 14.x the
+  slot held `VOP_EINVAL` and the error was `EINVAL`). Check which path you
+  actually got — `df -T "$XDG_RUNTIME_DIR"` — before applying a fix. Under
+  Sakura it is `pam_xdg`'s `/var/run/xdg/$USER`, which is in the root dataset on
+  a stock ZFS-root install, so backing `/tmp` with `tmpfs` does nothing for it.
+  Mount the `tmpfs` on the **parent** and let `pam_xdg` create the per-user
+  directory inside it:
+
+  ```
+  tmpfs /var/run/xdg tmpfs rw,mode=711 0 0
+  ```
+
+  Do *not* mount it on `/var/run/xdg/$USER` itself. If that directory already
+  exists, `pam_xdg` requires it to be owned by the user's uid *and* gid and to
+  be exactly mode `0700`, and fails the session with `PAM_SESSION_ERR`
+  otherwise — so a mount point left owned by `root` refuses the login outright.
+  Correcting the ownership is still not enough: when the user's last session
+  ends the module removes that directory with `unlinkat(..., AT_REMOVEDIR)`,
+  which cannot succeed on a mount point, so logout fails too. Mounting the
+  parent avoids both, `0711` being the mode `pam_xdg` itself uses when it
+  creates `/var/run/xdg`. The `/tmp` advice applies only when
+  `XDG_RUNTIME_DIR` is unset and `start-hikari` is creating
+  `/tmp/hikari-runtime-$UID` itself.
 
 **On Linux, the two default prefixes do not meet.** Sakura's prefix defaults to
 `/usr` there, so its `waylandsessions` default is
