@@ -16,15 +16,29 @@ const builtin = @import("builtin");
 
 const UidRange = @import("UidRange.zig");
 
+// Action purpose: The other BSDs compile the FreeBSD implementation rather than
+// being turned away. FreeBSD 15.0+ is what this is written and tested against,
+// and nothing here claims NetBSD, OpenBSD or DragonFly works -- but refusing to
+// build on them taught a porter nothing. Pointed at this file they get real
+// errors naming the pieces that do not fit, which on DragonFly is little and on
+// the wscons systems is the console layer, and that is a starting point rather
+// than a closed door. Anything that is not a BSD or Linux still stops here,
+// because there is no implementation it could sensibly be given.
 const impl = switch (builtin.target.os.tag) {
-    .freebsd => @import("interop/freebsd.zig"),
+    .freebsd, .netbsd, .openbsd, .dragonfly => @import("interop/freebsd.zig"),
     .linux => @import("interop/linux.zig"),
-    else => @compileError("unsupported target: " ++ @tagName(builtin.target.os.tag)),
+    else => @compileError("no interop layer for " ++ @tagName(builtin.target.os.tag) ++
+        "; Sakura targets FreeBSD 15.0+ and Linux. Add src/interop/<os>.zig and a case here to port it."),
 };
 
-/// True when this build targets the first-class platform. Call sites use this
-/// rather than re-deriving the target, so adding a platform touches one file.
-pub const is_freebsd = builtin.target.os.tag == .freebsd;
+/// True when the FreeBSD implementation is the one compiled in -- which also
+/// covers the untested BSDs above, since they share it and must therefore share
+/// its behaviour. Call sites use this rather than re-deriving the target, so
+/// adding a platform touches one file.
+pub const is_freebsd = switch (builtin.target.os.tag) {
+    .freebsd, .netbsd, .openbsd, .dragonfly => true,
+    else => false,
+};
 
 // Translated C headers that application code legitimately reaches into. The
 // platform-only ones -- sysctl, kbio, consio on FreeBSD; kd, vt, grp on Linux

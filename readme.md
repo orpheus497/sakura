@@ -94,8 +94,16 @@ Setting the desktop up from Sakura's side is covered in
 
 | Platform | Status |
 | --- | --- |
-| FreeBSD | **First-class.** The platform Sakura is designed for and tested on. |
+| FreeBSD 15.0 or newer | **First-class.** The platform Sakura is designed for and tested on, and the baseline everything here assumes. |
 | Linux | **Supported, second-class.** Builds and passes the test suite on Ubuntu, Arch and Fedora in CI; FreeBSD wins design ties. See the caveat below. |
+| NetBSD, OpenBSD, DragonFly | **Untested, not blocked.** The build warns and carries on, compiling the FreeBSD code. Expect the console layer to be the mismatch: `sys/consio.h` is FreeBSD's, so that is where the first errors land. Patches welcome; nothing is promised. |
+| Anything else | Not built. There is no implementation to give it, and the build says so plainly rather than failing deep inside a header translation. |
+
+FreeBSD 15.0 is the floor on purpose, and two things depend on it: `pam_xdg(8)`
+is in the default `system` policy there, which is what gives a graphical session
+its `XDG_RUNTIME_DIR`, and OpenPAM understands the leading `-` on a policy line,
+which earlier releases treat as a fatal parse error. Older FreeBSD may well
+work; it is simply not what this is written against or tested on.
 
 > **What "supported" does and does not claim on Linux.** CI builds Sakura, runs
 > its tests and validates the shipped `config.ini` on three Linux
@@ -624,12 +632,6 @@ that `/etc/pam.d/login` includes and that Sakura's FreeBSD policy pulls in via
 `session include login`. It creates `/var/run/xdg/$USER` at mode `0700` and
 publishes the variable into the PAM environment, which Sakura then exports.
 
-That has a version floor worth knowing, because `pam_xdg` entered the default
-`system` policy in **FreeBSD 14.1** and is absent from 14.0 and 13.x. On those
-releases nothing sets `XDG_RUNTIME_DIR`, and a Wayland session that does not
-establish one itself cannot create its socket. For hikari-sakura that means
-choosing its **Hikari** entry, which runs a wrapper that creates one; see
-[Running hikari-sakura](#running-hikari-sakura).
 This is why the Linux PAM policy is a separate file and why the
 `-session optional pam_systemd.so` line in it is load-bearing: without it there
 is no runtime directory and no seat ownership, and Wayland compositors that use
@@ -1246,18 +1248,18 @@ Both declare `DesktopNames=Sakura`, so either way Sakura exports
 `XDG_CURRENT_DESKTOP=Sakura` and the desktop is reported under one name. Note
 that the longer label is *not* the wrapper — it is the barer of the two.
 
-**Which to pick turns on `XDG_RUNTIME_DIR`.** `start-hikari` creates one if the
-system did not provide it, checks it is owned by you and mode `0700`, warns if
-it sits on ZFS, clears any `WAYLAND_DISPLAY` or `DISPLAY` leaked in from the
-parent, and wraps the compositor in `dbus-run-session` when no session bus is
-running. The `Hikari Sakura` entry does none of that; it takes the variable as
-given and the compositor exits immediately if it is missing.
+**Either works.** On FreeBSD 15 `pam_xdg` supplies `XDG_RUNTIME_DIR` and Sakura
+passes it on, so the compositor has what it needs by the time either entry runs.
+Pick whichever you like.
 
-So on **FreeBSD 14.1 and newer**, where `pam_xdg` supplies the runtime
-directory and Sakura passes it through, either entry works. On **14.0 and
-earlier**, and on any system whose PAM stack omits `pam_xdg`, pick **Hikari** —
-it is the one that will start. If you are unsure, pick **Hikari**: the wrapper
-only adds fallbacks, so it is never the reason a session fails.
+The difference, if you want one: `start-hikari` creates a runtime directory when
+nothing else did, checks it is owned by you and mode `0700`, warns if it sits on
+ZFS, clears any `WAYLAND_DISPLAY` or `DISPLAY` leaked in from the parent, and
+wraps the compositor in `dbus-run-session` when no session bus is running. The
+`Hikari Sakura` entry does none of that and takes the environment as given. Those
+are belt-and-braces checks here, not requirements — they matter when something
+other than Sakura starts the session, or when the runtime directory is on ZFS and
+you want to be told.
 
 Two FreeBSD-specific things have to be right before any Wayland session will
 work, and neither is Sakura's to fix — they are documented in full in
@@ -1268,11 +1270,11 @@ hikari-sakura's readme:
 - `XDG_RUNTIME_DIR` must not sit on ZFS. Wayland clients that call
   `posix_fallocate` fail there with `EINVAL`, ZFS having no `vop_allocate`.
   Check which path you actually got — `df -T "$XDG_RUNTIME_DIR"` — before
-  applying a fix: under Sakura on FreeBSD 14.1+ it is `pam_xdg`'s
-  `/var/run/xdg/$USER`, which is in the root dataset on a stock ZFS-root
-  install, and backing `/tmp` with `tmpfs` does nothing for it. The `/tmp`
-  advice applies when `XDG_RUNTIME_DIR` is unset and `start-hikari` is creating
-  `/tmp/hikari-runtime-$UID` itself.
+  applying a fix. Under Sakura it is `pam_xdg`'s `/var/run/xdg/$USER`, which is
+  in the root dataset on a stock ZFS-root install, so backing `/tmp` with
+  `tmpfs` does nothing for it; give that path its own `tmpfs` instead. The
+  `/tmp` advice applies only when `XDG_RUNTIME_DIR` is unset and
+  `start-hikari` is creating `/tmp/hikari-runtime-$UID` itself.
 
 **On Linux, the two default prefixes do not meet.** Sakura's prefix defaults to
 `/usr` there, so its `waylandsessions` default is

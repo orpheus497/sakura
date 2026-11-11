@@ -4,9 +4,9 @@
 # and adds logind session registration and keyring startup.
 
 # Linux-PAM policy for automatic login. Identical to sakura-linux except for
-# the auth stack. Kept separate from the FreeBSD policy for the same reason:
-# it depends on the leading "-" prefix, which is fatal to the whole policy on
-# FreeBSD 14.3 and earlier.
+# the auth stack, and kept separate from the FreeBSD policy for the same
+# reason: every module it adds is a distribution package with no FreeBSD
+# counterpart.
 
 # pam_permit.so replaces the distribution's entire auth stack rather than
 # adding to it, so everything that stack would have enforced is bypassed --

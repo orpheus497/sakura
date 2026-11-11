@@ -2600,6 +2600,80 @@ fn addOtherEnvironment(session: *Session, lang: Lang, display_server: DisplaySer
     });
 }
 
+// Function purpose: Return a copy of a desktop entry file with whole-line
+// comments removed, so the entry reader can run with comment stripping switched
+// off altogether.
+//
+// Action purpose: The Desktop Entry Specification makes "#" a comment marker
+// only at the start of a line -- "Lines beginning with a # and blank lines are
+// considered comments" -- and lets a value hold any printable ASCII character,
+// listing "#" among those an Exec argument would have to quote. The ini reader
+// underneath does not draw that distinction: it cuts every line at the first
+// "#" at any offset, which silently truncated `Exec=foo --bg=#1e1e2e` to
+// `Exec=foo --bg=` and `Name=C# Workbench` to `C`. That behaviour is deliberate
+// upstream -- its own test suite asserts that `names = Budgie;GNOME # Don't
+// mind me` parses to `Budgie;GNOME` -- so it cannot be corrected there without
+// forking the dependency. The comment lines are therefore removed here and the
+// reader is told to treat "#" as an ordinary character.
+//
+// Leading whitespace ahead of the "#" is tolerated, which is what GLib's
+// key-file parser accepts, and cannot swallow a real value line: a value line
+// has to begin with a key name. A backslash before a "#" is no longer special,
+// because it no longer needs to be -- the "#" is kept either way.
+//
+// Session entries only. Sakura's own config.ini and locale files keep the
+// reader's normal comment handling, which they are written against.
+fn stripEntryComments(allocator: Allocator, contents: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trimStart(u8, line, " \t");
+        if (trimmed.len > 0 and trimmed[0] == '#') continue;
+        try out.appendSlice(allocator, line);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+// Function purpose: Read one desktop entry file into the parsed struct, with
+// whole-line comments stripped beforehand by stripEntryComments.
+fn readEntryFile(allocator: Allocator, io: std.Io, entry_ini: *Ini(Entry), path: []const u8) !Entry {
+    var file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+
+    // Action purpose: bound the read. A desktop entry is a handful of
+    // key-value lines; 1 MiB is already far beyond any real one, and an
+    // unbounded read would pull whatever a stray file in the sessions
+    // directory happens to contain wholly into memory during startup.
+    // Exceeding the limit fails this entry alone, like any other read error.
+    var file_buffer: [4096]u8 = undefined;
+    var file_reader = file.reader(io, &file_buffer);
+    const contents = try file_reader.interface.allocRemaining(allocator, .limited(1 << 20));
+    defer allocator.free(contents);
+
+    return parseEntryText(allocator, entry_ini, contents);
+}
+
+// Function purpose: Parse the text of a desktop entry. Split out from
+// readEntryFile so the comment handling can be exercised without a file on
+// disk.
+fn parseEntryText(allocator: Allocator, entry_ini: *Ini(Entry), contents: []const u8) !Entry {
+    const stripped = try stripEntryComments(allocator, contents);
+    defer allocator.free(stripped);
+
+    // The reader copies every value it keeps into entry_ini's own arena, so
+    // freeing the stripped buffer on return does not leave the struct pointing
+    // into it.
+    var reader = std.Io.Reader.fixed(stripped);
+    return entry_ini.readToStruct(&reader, .{
+        .fieldHandler = null,
+        .comment_characters = "",
+    });
+}
+
 // Function purpose: Read every desktop entry in one session directory and add
 // each as a selectable environment. Returns the number of entries that were
 // skipped because they could not be parsed, so the caller can tell the user
@@ -2635,10 +2709,7 @@ fn crawl(session: *Session, io: std.Io, log_file: *LogFile, lang: Lang, path: []
         // the arena is freed twice. The log write is deliberately not `try`d:
         // failing to record a skipped entry is not a reason to drop the entries
         // that parsed cleanly.
-        const data = entry_ini.readFileToStruct(io, entry_path, .{
-            .fieldHandler = null,
-            .comment_characters = "#",
-        }) catch |err| {
+        const data = readEntryFile(session.label.allocator, io, &entry_ini, entry_path) catch |err| {
             log_file.err(
                 io,
                 "sys",
@@ -2651,8 +2722,20 @@ fn crawl(session: *Session, io: std.Io, log_file: *LogFile, lang: Lang, path: []
         };
         errdefer entry_ini.deinit();
 
-        const file_name = try session.label.allocator.dupe(u8, std.Io.Dir.path.stem(item.name));
         const entry = data.@"Desktop Entry";
+
+        // Action purpose: Honour the two keys that ask for an entry not to be
+        // offered. This is not an error and is not counted as a skip: the file
+        // is doing what it was installed to do. A package that renames a
+        // session ships the old name back with Hidden=true to retire it, so
+        // listing it anyway puts a session in the login box whose Exec target
+        // has been removed on purpose.
+        if ((entry.Hidden orelse false) or (entry.NoDisplay orelse false)) {
+            entry_ini.deinit();
+            continue;
+        }
+
+        const file_name = try session.label.allocator.dupe(u8, std.Io.Dir.path.stem(item.name));
         var maybe_xdg_session_desktop: ?[]const u8 = null;
         var maybe_xdg_desktop_names: ?[]const u8 = null;
 
@@ -2791,4 +2874,133 @@ test {
     // Pulls in every module this file imports so their tests are discovered;
     // Zig skips analysing container-level imports that nothing references.
     std.testing.refAllDecls(@This());
+}
+
+test "a whole-line comment is dropped, a mid-line # is kept" {
+    const allocator = std.testing.allocator;
+
+    const stripped = try stripEntryComments(allocator,
+        \\# a comment
+        \\   # an indented comment
+        \\Name=Thing
+        \\Exec=/usr/bin/thing --bg=#1e1e2e
+    );
+    defer allocator.free(stripped);
+
+    try std.testing.expectEqualStrings(
+        \\Name=Thing
+        \\Exec=/usr/bin/thing --bg=#1e1e2e
+        \\
+    , stripped);
+}
+
+test "a # inside a value survives parsing" {
+    const allocator = std.testing.allocator;
+
+    // Both of these used to be truncated at the "#": the Exec line lost its
+    // colour and the Name was cut down to "C".
+    var entry_ini = Ini(Entry).init(allocator);
+    defer entry_ini.deinit();
+
+    const data = try parseEntryText(allocator, &entry_ini,
+        \\[Desktop Entry]
+        \\Name=C# Workbench
+        \\Exec=/usr/bin/thing --bg=#1e1e2e
+        \\Type=Application
+    );
+
+    const entry = data.@"Desktop Entry";
+    try std.testing.expectEqualStrings("C# Workbench", entry.Name);
+    try std.testing.expectEqualStrings("/usr/bin/thing --bg=#1e1e2e", entry.Exec);
+}
+
+test "Hidden and NoDisplay are read, and default to unset" {
+    const allocator = std.testing.allocator;
+
+    const Case = struct { text: []const u8, hidden: ?bool, no_display: ?bool };
+    const cases = [_]Case{
+        .{ .text =
+        \\[Desktop Entry]
+        \\Name=Retired
+        \\Exec=/usr/bin/old
+        \\Hidden=true
+        , .hidden = true, .no_display = null },
+        .{ .text =
+        \\[Desktop Entry]
+        \\Name=Helper
+        \\Exec=/usr/bin/helper
+        \\NoDisplay=true
+        , .hidden = null, .no_display = true },
+        .{ .text =
+        \\[Desktop Entry]
+        \\Name=Hikari Sakura
+        \\Exec=dbus-run-session /usr/local/bin/hikari
+        \\DesktopNames=Sakura
+        , .hidden = null, .no_display = null },
+    };
+
+    for (cases) |case| {
+        var entry_ini = Ini(Entry).init(allocator);
+        defer entry_ini.deinit();
+
+        const entry = (try parseEntryText(allocator, &entry_ini, case.text)).@"Desktop Entry";
+        try std.testing.expectEqual(case.hidden, entry.Hidden);
+        try std.testing.expectEqual(case.no_display, entry.NoDisplay);
+    }
+}
+
+test "an unconvertible value fails only its own entry" {
+    const allocator = std.testing.allocator;
+
+    // The Desktop Entry Specification allows only "true" and "false" for a
+    // boolean, so rejecting "True" is correct; crawl() turns this error into a
+    // skip of this one file rather than abandoning the directory.
+    var entry_ini = Ini(Entry).init(allocator);
+    defer entry_ini.deinit();
+
+    try std.testing.expectError(error.InvalidValue, parseEntryText(allocator, &entry_ini,
+        \\[Desktop Entry]
+        \\Name=Some Vendor Session
+        \\Exec=/usr/bin/vendor-session
+        \\Terminal=True
+    ));
+}
+
+test "the shipped hikari-sakura entries parse as expected" {
+    const allocator = std.testing.allocator;
+
+    // The two entries hikari-sakura installs, as they look after its Makefile
+    // rewrites Exec= to an absolute path.
+    var entry_ini = Ini(Entry).init(allocator);
+    defer entry_ini.deinit();
+
+    const wrapper = (try parseEntryText(allocator, &entry_ini,
+        \\[Desktop Entry]
+        \\Name=Hikari
+        \\Comment=Hikari Sakura via the start-hikari session wrapper
+        \\Exec=/usr/local/bin/start-hikari
+        \\Type=Application
+        \\DesktopNames=Sakura
+    )).@"Desktop Entry";
+
+    try std.testing.expectEqualStrings("Hikari", wrapper.Name);
+    try std.testing.expectEqualStrings("/usr/local/bin/start-hikari", wrapper.Exec);
+    try std.testing.expectEqualStrings("Sakura", wrapper.DesktopNames.?);
+    try std.testing.expectEqual(@as(?bool, null), wrapper.Hidden);
+
+    var binary_ini = Ini(Entry).init(allocator);
+    defer binary_ini.deinit();
+
+    const binary = (try parseEntryText(allocator, &binary_ini,
+        \\[Desktop Entry]
+        \\Name=Hikari Sakura
+        \\Comment=FreeBSD focused comprehensive Wayland desktop environment
+        \\Exec=dbus-run-session /usr/local/bin/hikari
+        \\Type=Application
+        \\DesktopNames=Sakura
+    )).@"Desktop Entry";
+
+    try std.testing.expectEqualStrings("Hikari Sakura", binary.Name);
+    try std.testing.expectEqualStrings("dbus-run-session /usr/local/bin/hikari", binary.Exec);
+    try std.testing.expectEqualStrings("Sakura", binary.DesktopNames.?);
 }
