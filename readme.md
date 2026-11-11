@@ -1360,8 +1360,15 @@ A typical shebang for a shell script looks like this:
 Check `/var/log/sakura.log`. Authentication goes through OpenPAM, so a policy
 problem shows up there rather than on screen.
 
-Note that OpenPAM does **not** support the `-` prefix on module lines that
-Linux-PAM allows. A policy copied from a Linux system will fail to load.
+Do not copy a policy over from a Linux system. OpenPAM has accepted the leading
+`-` on a module line since FreeBSD 15.0, so such a policy may well load, but the
+prefix does not mean the same thing on both: on OpenPAM it skips the line when
+the module file is absent, while on Linux-PAM it only suppresses the log entry
+and `optional` is what makes the module non-fatal. The bigger problem is that a
+Linux policy names modules FreeBSD does not have — `pam_systemd`,
+`pam_gnome_keyring` and the like — so what you end up with is a policy that
+loads and enforces nothing. Use the shipped `sakura-freebsd`, which defers to
+the base system's own login stack.
 
 If `allow_empty_password` is `false`, an account with no password is refused
 even when you enter nothing correctly.

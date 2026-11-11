@@ -50,7 +50,29 @@ pub fn main(init: std.process.Init) !void {
     prefix_directory = args.next().?;
     executable_name = args.next().?;
     const default_tty_str = args.next().?;
-    target_os = std.meta.stringToEnum(TargetOs, args.next().?).?;
+
+    // Action purpose: Refuse an OS this installer has no layout for, by name
+    // and in one line. build.zig warns and builds on the other BSDs rather
+    // than turning them away, which means this argument can now carry
+    // something other than freebsd or linux -- and `stringToEnum(...).?` would
+    // meet that with a null-unwrap panic naming nothing. Installing is where
+    // the knowledge genuinely runs out: the PAM policy to pick, how virtual
+    // terminal device nodes are named, and whether the host starts Sakura from
+    // getty(8) or a service file all differ per OS, and none of it is known for
+    // NetBSD, OpenBSD or DragonFly. So building stays open and installing says
+    // why it cannot proceed.
+    const target_os_name = args.next().?;
+    target_os = std.meta.stringToEnum(TargetOs, target_os_name) orelse {
+        std.debug.print(
+            "install: no install layout for '{s}'. Sakura installs on FreeBSD and Linux;" ++
+                " build on other systems is untested and unsupported, and installing" ++
+                " would have to guess the PAM policy, the tty device naming and the" ++
+                " start mechanism. Install by hand, or add a TargetOs case.\n",
+            .{target_os_name},
+        );
+        return error.UnsupportedTargetOs;
+    };
+
     init_system = std.meta.stringToEnum(InitSystem, args.next().?).?;
 
     wrapper_name = try std.fmt.allocPrint(allocator, "{s}_wrapper", .{executable_name});
