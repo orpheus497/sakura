@@ -661,8 +661,16 @@ fn truncateReusedLog(global_log_file: *LogFile, io: std.Io, file: std.Io.File, s
 /// The directory holding the log cannot be written, so no staging file can be
 /// made beside it and the replacement is impossible. This returns null: no
 /// redirection happens, the session's streams are left pointing wherever they
-/// already pointed, and the login proceeds. Nothing is written, so nothing can
-/// leak.
+/// already pointed, and the login proceeds.
+///
+/// To be exact about what that does and does not buy: nothing is written to the
+/// configured path, so the file whose exposure could not be established gains
+/// none of this session's output. The session does still write to the stdout
+/// and stderr it inherited, and their exposure is whatever it already was --
+/// unchanged by this decision, since declining to redirect leaves them exactly
+/// as the caller handed them over. Under Sakura that is the console terminal
+/// the login was started on. So the claim here is the narrow one: this choice
+/// adds no exposure. It does not make the session's output private.
 ///
 /// Reusing the file that is there would be wrong even at mode 0600, and the
 /// argument for reuse is worth refuting explicitly because it is easy to make.
@@ -787,9 +795,11 @@ fn openSessionLog(global_log_file: *LogFile, io: std.Io, session_log: []const u8
         //
         // Refusing the login outright would be the other option, and is worse:
         // it denies service to protect data that simply does not have to be
-        // written. Not redirecting writes nothing, leaks nothing, and leaves
-        // the session working, which is also what `session_log = null` already
-        // does by choice.
+        // written here. Not redirecting adds no exposure -- the configured path
+        // receives nothing -- and leaves the session working, which is also
+        // what `session_log = null` already does by choice. It does not make
+        // the session's output private: that output goes to the inherited
+        // stdout and stderr, as unredirected output always has.
         error.AccessDenied, error.PermissionDenied => {
             try global_log_file.err(
                 io,
